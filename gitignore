@@ -245,37 +245,3 @@ site/
 # ============================================================
 *.orig
 *.rej
-```
-
----
-
-## 📝 SPIEGAZIONE SEZIONI IMPORTANTI
-
-### **🔥 Sezioni Critiche per il Tuo Progetto:**
-
-1. **Output Applicazione** (linea 119-128):
-   - Ignora tutti i file Excel generati dall'app
-   - Pattern `*_Corrispondenze*.xlsx` cattura anche versioni numerate (`_1`, `_2`, ecc.)
-
-2. **File Excel Temporanei** (linea 102-109):
-   - `~$*.xlsx` → File aperti in Excel (lock files)
-
-3. **Backup Preset** (linea 131-133):
-   - Ignora i backup automatici di `presets.json`
-
-4. **Python Cache** (linea 8-11):
-   - Ignora `__pycache__` e `.pyc` (sempre)
-
----
-
-## ⚠️ FILE DA **NON** IGNORARE (committare su Git)
-
-Questi file **devono** essere presenti nel repository:
-```
-✅ code_comparator.py       # Codice principale
-✅ README.md                # Documentazione
-✅ LICENSE                  # Licenza
-✅ requirements.txt         # Dipendenze
-✅ setup.py                 # Configurazione installazione
-✅ MANIFEST.in              # Inclusioni package
-✅ .gitignore               # Questo file
