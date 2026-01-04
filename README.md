@@ -13,13 +13,6 @@
 
 ![Schermata Principale](https://github.com/user-attachments/assets/f3aa4eb1-7238-4c94-a673-756c9b737e2b)
 
----
-
-## 📸 Screenshot
-
-<!-- Aggiungi screenshot qui quando li hai -->
-<!-- ![Schermata Principale](docs/screenshot_main.png) -->
-<!-- ![Risultati Confronto](docs/screenshot_results.png) -->
 
 ---
 
