@@ -3,10 +3,15 @@
 **Applicazione desktop per confrontare liste basate su colonne chiave (ISBN, codici inventario, ID, ecc.)**
 
 ![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)
-![PyQt6](https://img.shields.<img width="1920" height="1017" alt="2026-01-04 23 13 02" src="https://github.com/user-attachments/assets/f3aa4eb1-7238-4c94-a673-756c9b737e2b" />
-io/badge/PyQt6-6.4%2B-green)
+![PyQt6](https://img.shields.io/badge/PyQt6-6.4%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-beta-orange)
+
+---
+
+## 📸 Screenshot
+
+![Schermata Principale](https://github.com/user-attachments/assets/f3aa4eb1-7238-4c94-a673-756c9b737e2b)
 
 ---
 
