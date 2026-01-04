@@ -1,0 +1,281 @@
+# ============================================================
+# CODE COMPARATOR - .gitignore
+# ============================================================
+
+# ============================================================
+# PYTHON
+# ============================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ============================================================
+# SISTEMA OPERATIVO
+# ============================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================
+# EXCEL E OFFICE
+# ============================================================
+# File temporanei Excel/Word/PowerPoint
+~$*.xlsx
+~$*.xls
+~$*.xlsm
+~$*.doc
+~$*.docx
+~$*.ppt
+~$*.pptx
+
+# File di backup Excel
+*.xlk
+*.bak
+
+# ============================================================
+# OUTPUT GENERATI DALL'APPLICAZIONE
+# ============================================================
+# File di output del comparatore
+*_Corrispondenze*.xlsx
+*_Mancanti*.xlsx
+ISBN_Corrispondenze*.xlsx
+ISBN_Mancanti*.xlsx
+Inventario_Corrispondenze*.xlsx
+Inventario_Mancanti*.xlsx
+
+# Backup preset
+presets.json.bak
+presets.json.backup
+presets_*.json
+
+# ============================================================
+# LOG E DEBUG
+# ============================================================
+*.log
+logs/
+debug.log
+error.log
+
+# ============================================================
+# ALTRI FILE TEMPORANEI
+# ============================================================
+# File temporanei generici
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Copie di sicurezza
+*.backup
+*.old
+
+# File di test
+test_*.xlsx
+test_*.xls
+debug_*.xlsx
+esempio_test*.xlsx
+
+# ============================================================
+# FILE SENSIBILI (NON COMMITTARE MAI!)
+# ============================================================
+# Dati reali di biblioteche/utenti
+dati_reali/
+backup_dati/
+esportazioni/
+
+# Configurazioni con password/token
+config_private.json
+secrets.json
+.env
+.env.local
+
+# ============================================================
+# PACKAGING E DEPLOY
+# ============================================================
+# PyInstaller output
+*.exe
+*.app
+*.dmg
+*.pkg
+
+# Build artifacts
+*.spec
+dist/
+build/
+
+# ============================================================
+# DOCUMENTAZIONE GENERATA
+# ============================================================
+# Sphinx documentation
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# MkDocs
+site/
+
+# ============================================================
+# JUPYTER NOTEBOOK (se li usi per test)
+# ============================================================
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================================
+# GIT
+# ============================================================
+*.orig
+*.rej
+```
+
+---
+
+## 📝 SPIEGAZIONE SEZIONI IMPORTANTI
+
+### **🔥 Sezioni Critiche per il Tuo Progetto:**
+
+1. **Output Applicazione** (linea 119-128):
+   - Ignora tutti i file Excel generati dall'app
+   - Pattern `*_Corrispondenze*.xlsx` cattura anche versioni numerate (`_1`, `_2`, ecc.)
+
+2. **File Excel Temporanei** (linea 102-109):
+   - `~$*.xlsx` → File aperti in Excel (lock files)
+
+3. **Backup Preset** (linea 131-133):
+   - Ignora i backup automatici di `presets.json`
+
+4. **Python Cache** (linea 8-11):
+   - Ignora `__pycache__` e `.pyc` (sempre)
+
+---
+
+## ⚠️ FILE DA **NON** IGNORARE (committare su Git)
+
+Questi file **devono** essere presenti nel repository:
+```
+✅ code_comparator.py       # Codice principale
+✅ README.md                # Documentazione
+✅ LICENSE                  # Licenza
+✅ requirements.txt         # Dipendenze
+✅ setup.py                 # Configurazione installazione
+✅ MANIFEST.in              # Inclusioni package
+✅ .gitignore               # Questo file
