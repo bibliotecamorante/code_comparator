@@ -1,6 +1,6 @@
 # 📊 Code Comparator
 
-**Applicazione desktop per confrontare liste basate su colonne chiave (codicivISBN, inventari, ID, ecc.)**
+**Applicazione desktop per confrontare liste basate su colonne chiave (codici ISBN, inventari, ID, ecc.)**
 
 ![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.4%2B-green)
