@@ -6,6 +6,11 @@
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.4%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+
+## 📸 Screenshot
+
+![Schermata Principale](https://github.com/user-attachments/assets/f3aa4eb1-7238-4c94-a673-756c9b737e2b)
+
 ---
 
 ## ✨ Caratteristiche
