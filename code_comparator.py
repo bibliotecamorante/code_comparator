@@ -2,9 +2,12 @@ import sys
 import os
 import pandas as pd
 import io
+import csv  # ← NUOVO: necessario per gestire le virgolette
 import json
 import shutil
 import logging
+from pathlib import Path
+
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTableWidget, QTableWidgetItem, 
@@ -79,6 +82,8 @@ EXCEL_COLUMN_WIDTHS = {
     12: ["ANNO", "YEAR", "PREZZO", "PRICE", "SEQUENZA", "SEZIONE", "SECTION", "SPECIFICAZIONE"]
 }
 
+MAX_COLUMNS = 7
+
 # ============================================================
 # GLOBAL CSS STYLES
 # ============================================================
@@ -86,6 +91,8 @@ APP_STYLESHEET = """
     QMainWindow {
         background-color: #f5f6fa;
     }
+    
+    /* STILE BASE PULSANTI */
     QPushButton {
         background-color: #3498db;
         color: white;
@@ -101,6 +108,12 @@ APP_STYLESHEET = """
     QPushButton:pressed {
         background-color: #21618c;
     }
+    QPushButton:disabled {
+        background-color: #bdc3c7;
+        color: #7f8c8d;
+    }
+    
+    /* PULSANTI SPECIALIZZATI (solo colori diversi) */
     QPushButton#btn_compare {
         background-color: #9b59b6;
         color: white;
@@ -111,6 +124,7 @@ APP_STYLESHEET = """
         background-color: #8e44ad;
         border: 3px solid #5b2c6f;
     }
+
     QPushButton#btn_export_matches {
         background-color: #27ae60;
         color: white;
@@ -118,6 +132,7 @@ APP_STYLESHEET = """
     QPushButton#btn_export_matches:hover {
         background-color: #229954;
     }
+
     QPushButton#btn_export_mismatches {
         background-color: #e67e22;
         color: white;
@@ -125,6 +140,7 @@ APP_STYLESHEET = """
     QPushButton#btn_export_mismatches:hover {
         background-color: #d35400;
     }
+
     QPushButton#btn_clear_results {
         background-color: #95a5a6;
         color: white;
@@ -132,6 +148,7 @@ APP_STYLESHEET = """
     QPushButton#btn_clear_results:hover {
         background-color: #7f8c8d;
     }
+
     QPushButton#btn_settings {
         background-color: #34495e;
         color: white;
@@ -139,10 +156,16 @@ APP_STYLESHEET = """
     QPushButton#btn_settings:hover {
         background-color: #2c3e50;
     }
-    QPushButton:disabled {
-        background-color: #bdc3c7;
-        color: #7f8c8d;
+
+    QPushButton#btn_swap {
+        background-color: #f39c12;
+        color: white;
     }
+    QPushButton#btn_swap:hover {
+        background-color: #e67e22;
+    }
+    
+    /* TABELLE */
     QTableWidget {
         border: 1px solid #bdc3c7;
         border-radius: 5px;
@@ -152,9 +175,6 @@ APP_STYLESHEET = """
         selection-color: #000000;
     }
     
-    /* ============================================ */
-    /* HEADER CON FRECCE VISIBILI - STILE MIGLIORATO */
-    /* ============================================ */
     QHeaderView::section {
         background-color: #ecf0f1;
         color: #2c3e50;
@@ -166,8 +186,8 @@ APP_STYLESHEET = """
     QHeaderView::section:hover {
         background-color: #d5dbdb;
     }
-    /* ============================================ */
     
+    /* TABS */
     QTabWidget::pane {
         border: 1px solid #bdc3c7;
         border-radius: 5px;
@@ -220,8 +240,8 @@ class SettingsDialog(QDialog):
         if not isinstance(columns, list) or len(columns) < 1:
             return False, "Deve esserci almeno una colonna"
         
-        if len(columns) > 7:
-            return False, "Massimo 7 colonne consentite"
+        if len(columns) > MAX_COLUMNS:
+            return False, f"Massimo {MAX_COLUMNS} colonne consentite"
         
         if key_column not in columns:
             return False, f"La colonna chiave '{key_column}' deve essere presente nelle colonne"
@@ -299,7 +319,7 @@ class SettingsDialog(QDialog):
         number_label = QLabel("Numero colonna chiave*:")
         number_label.setStyleSheet("font-weight: bold;")
         self.input_key_number = QLineEdit()
-        self.input_key_number.setPlaceholderText("Da 1 a 7")
+        self.input_key_number.setPlaceholderText(f"Da 1 a {MAX_COLUMNS}")
         number_layout.addWidget(number_label)
         number_layout.addWidget(self.input_key_number)
         
@@ -321,7 +341,7 @@ class SettingsDialog(QDialog):
         
         # 7 campi per le colonne (tutte opzionali)
         self.column_inputs = []
-        for i in range(7):
+        for i in range(MAX_COLUMNS):
             line_edit = QLineEdit()
             line_edit.setPlaceholderText("Opzionale")
             label_text = f"Colonna {i+1}:"
@@ -367,7 +387,7 @@ class SettingsDialog(QDialog):
         
         try:
             key_number = int(key_number_text)
-            if 1 <= key_number <= 7:
+            if 1 <= key_number <= MAX_COLUMNS:
                 # Valorizza automaticamente il campo corrispondente
                 self.column_inputs[key_number - 1].setText(key_name)
                 # Memorizza l'ultima posizione e nome
@@ -413,10 +433,14 @@ class SettingsDialog(QDialog):
         
         try:
             key_number = int(key_number_text)
-            if not (1 <= key_number <= 7):
-                QMessageBox.warning(self, "Valore Non Valido", 
-                                  "Il Numero colonna chiave deve essere compreso tra 1 e 7!")
+            if not (1 <= key_number <= MAX_COLUMNS):
+                QMessageBox.warning(
+                    self,
+                    "Valore Non Valido",
+                    f"Il Numero colonna chiave deve essere compreso tra 1 e {MAX_COLUMNS}!"
+                )
                 return
+
         except ValueError:
             QMessageBox.warning(self, "Valore Non Valido", 
                               "Il Numero colonna chiave deve essere un numero!")
@@ -424,7 +448,7 @@ class SettingsDialog(QDialog):
         
         # Raccogli tutte le colonne valorizzate
         columns = []
-        for i in range(7):
+        for i in range(MAX_COLUMNS):
             col_name = self.column_inputs[i].text().strip()
             if col_name:
                 columns.append(col_name)
@@ -463,6 +487,34 @@ class ComparisonEngine:
     """Motore di confronto logico separato dalla UI"""
     
     @staticmethod
+    def count_duplicates(df: pd.DataFrame, key_column: str = 'KEY_NORMALIZED') -> tuple[int, int]:
+        """
+        Conta duplicati in un DataFrame.
+        
+        Args:
+            df: DataFrame con colonna chiave
+            key_column: Nome colonna chiave (default: 'KEY_NORMALIZED')
+        
+        Returns:
+            tuple: (unique_keys_duplicated, total_rows_duplicated)
+        """
+        if df.empty or key_column not in df.columns:
+            return 0, 0
+        
+        # Filtra righe con chiave valida
+        valid_mask = df[key_column].notna() & (df[key_column].astype(str).str.strip() != "")
+        df_valid = df[valid_mask]
+        
+        if df_valid.empty:
+            return 0, 0
+        
+        duplicates_mask = df_valid[key_column].duplicated(keep=False)
+        unique_keys = df_valid[duplicates_mask][key_column].nunique()
+        total_rows = duplicates_mask.sum()
+        
+        return unique_keys, total_rows
+    
+    @staticmethod
     def compare(df1, df2, key_column='KEY_NORMALIZED'):
         """
         Confronta due DataFrame basandosi sulla colonna chiave normalizzata.
@@ -483,13 +535,16 @@ class ComparisonEngine:
         matches = df1[matches_mask].copy()
         mismatches = df1[~matches_mask].copy()
         
-        # Calcola statistiche
+        # Calcola statistiche usando il metodo centralizzato
+        duplicates_df1, _ = ComparisonEngine.count_duplicates(df1, key_column)
+        duplicates_df2, _ = ComparisonEngine.count_duplicates(df2, key_column)
+        
         stats = {
             'total': len(df1),
             'matches': len(matches),
             'mismatches': len(mismatches),
-            'duplicates_df1': df1[df1[key_column].duplicated(keep=False)][key_column].nunique(),
-            'duplicates_df2': df2[df2[key_column].duplicated(keep=False)][key_column].nunique()
+            'duplicates_df1': duplicates_df1,
+            'duplicates_df2': duplicates_df2
         }
         
         return matches, mismatches, stats
@@ -498,8 +553,8 @@ class ComparisonEngine:
 class TableManager:
     """Gestore centralizzato per la configurazione e manipolazione delle tabelle"""
     
-    def __init__(self, columns):
-        self.columns = columns
+    def __init__(self, columns=None):
+        self.columns = columns if columns is not None else []
         self._sort_column = None
         self._sort_order = None
     
@@ -571,7 +626,7 @@ class CodeComparator(QMainWindow):
         # CONFIGURAZIONE PRESET
         # ============================================================
         self.presets = {
-            "PREDEFINITO (ISBN, Ttitolo, Autore Editore, Anno, Prezzo, Note)": {
+            "PREDEFINITO (ISBN, Titolo, Autore Editore, Anno, Prezzo, Note)": {
                 "key_column": "ISBN",
                 "columns": ["ISBN", "TITOLO", "AUTORE", "EDITORE", "ANNO", "PREZZO", "NOTE"]
             },
@@ -583,12 +638,17 @@ class CodeComparator(QMainWindow):
         }
         
         # --- File di configurazione nella cartella dello script ---
-        self.config_file = os.path.join(os.path.dirname(__file__), "presets.json")
+        try:
+            base_dir = Path(__file__).resolve().parent
+        except NameError:
+            # Fallback se __file__ non è definito (es. in alcuni contesti di esecuzione)
+            base_dir = Path.cwd()
+        self.config_file = str(base_dir / "presets.json")
         
         # --- Carica preset salvati ---
         self.load_presets()
         
-        self.current_preset = "PREDEFINITO (ISBN, Ttitolo, Autore Editore, Anno, Prezzo, Note)"
+        self.current_preset = "PREDEFINITO (ISBN, Titolo, Autore Editore, Anno, Prezzo, Note)"
         self.key_column = self.presets[self.current_preset]["key_column"]
         self.columns = self.presets[self.current_preset]["columns"].copy()
         
@@ -605,6 +665,7 @@ class CodeComparator(QMainWindow):
                 "df": pd.DataFrame(columns=self.columns),
                 "table": None,
                 "label": None,
+                "duplicates_label": None,  # ✅ AGGIUNGI QUESTO
                 "deleted": [],
                 "btn_restore": None
             },
@@ -612,10 +673,13 @@ class CodeComparator(QMainWindow):
                 "df": pd.DataFrame(columns=self.columns),
                 "table": None,
                 "label": None,
+                "duplicates_label": None,  # ✅ AGGIUNGI QUESTO
                 "deleted": [],
                 "btn_restore": None
             }
         }
+                
+        
 
         # Risultati del confronto
         self.matches_df = None
@@ -649,15 +713,23 @@ class CodeComparator(QMainWindow):
             with open(self.config_file, "w", encoding="utf-8") as f:
                 json.dump(self.presets, f, indent=4, ensure_ascii=False)
             
-            print(f"✓ Preset salvati in: {self.config_file}")
+            logging.info(f"Preset salvati in: {self.config_file}")  # ✅
             
+        except PermissionError:
+            QMessageBox.warning(
+                self,
+                "Errore Permessi",
+                f"Impossibile scrivere su:\n{self.config_file}\n\n"
+                "Verifica i permessi della cartella."
+            )
+            logging.error(f"PermissionError salvando preset in: {self.config_file}")
         except Exception as e:
             QMessageBox.warning(
                 self, 
                 "Errore Salvataggio",
                 f"Impossibile salvare i preset:\n{str(e)}\n\nI preset saranno persi alla chiusura."
             )
-            print(f"❌ Errore nel salvataggio dei preset: {e}")
+            logging.exception(f"Errore nel salvataggio dei preset: {e}")
 
     def load_presets(self):
         """
@@ -665,7 +737,7 @@ class CodeComparator(QMainWindow):
         Valida i dati caricati per evitare corruzione.
         """
         if not os.path.exists(self.config_file):
-            print("ℹ️ Nessun file presets.json trovato. Uso preset predefiniti.")
+            logging.info("Nessun file presets.json trovato. Uso preset predefiniti.")  
             return
         
         try:
@@ -678,26 +750,20 @@ class CodeComparator(QMainWindow):
                 if self._validate_preset(preset_name, preset_data):
                     valid_presets[preset_name] = preset_data
                 else:
-                    print(f"⚠️ Preset '{preset_name}' non valido, ignorato.")
+                    logging.warning(f"Preset '{preset_name}' non valido, ignorato.")  # ✅ (usa warning per problemi)
             
             # Unisci con i preset predefiniti (i custom sovrascrivono i default se hanno lo stesso nome)
             self.presets.update(valid_presets)
             
-            print(f"✓ Caricati {len(valid_presets)} preset da: {self.config_file}")
+            logging.info(f"Caricati {len(valid_presets)} preset da: {self.config_file}") 
             
         except json.JSONDecodeError as e:
-            QMessageBox.warning(
-                self,
-                "File Corrotto",
-                f"Il file presets.json è corrotto:\n{str(e)}\n\nVerranno usati solo i preset predefiniti."
-            )
-            print(f"❌ Errore parsing JSON: {e}")
-            
-            # Tenta di ripristinare il backup
+            QMessageBox.warning(...)
+            logging.error(f"Errore parsing JSON: {e}")  # ✅ CORRETTO
             self._restore_backup()
             
         except Exception as e:
-            print(f"❌ Errore nel caricamento dei preset: {e}")
+            logging.error(f"Errore nel caricamento dei preset: {e}")  # ✅ CORRETTO
 
     def _validate_preset(self, preset_name, preset_data):
         """
@@ -732,7 +798,7 @@ class CodeComparator(QMainWindow):
         if os.path.exists(backup_file):
             try:
                 shutil.copy2(backup_file, self.config_file)
-                print(f"✓ Backup ripristinato da: {backup_file}")
+                logging.info(f"Backup ripristinato da: {backup_file}")
                 
                 # Riprova a caricare
                 self.load_presets()
@@ -743,28 +809,32 @@ class CodeComparator(QMainWindow):
     # GESTIONE EVENTI TASTIERA
     # ============================================================
     
+    def _get_active_list_id(self):
+        """Restituisce l'ID della lista con focus, o None"""
+        focused = QApplication.focusWidget()
+        for list_id, data in self.lists.items():
+            if focused == data["table"] or data["table"].isAncestorOf(focused):
+                return list_id
+        return None
+
     def keyPressEvent(self, event):
         """Gestisce CTRL+Z per ripristinare righe eliminate e CTRL+C per copiare"""
-        focused = QApplication.focusWidget()
+        list_id = self._get_active_list_id()
+        
+        if list_id is None:
+            super().keyPressEvent(event)
+            return
         
         # CTRL+Z: Ripristina righe eliminate
         if event.matches(QKeySequence.StandardKey.Undo):
-            # Identifica automaticamente quale lista ha il focus
-            for list_id, data in self.lists.items():
-                if focused == data["table"] or data["table"].isAncestorOf(focused):
-                    if data["deleted"]:
-                        self.restore_rows(list_id)
-                    break
+            if self.lists[list_id]["deleted"]:
+                self.restore_rows(list_id)
             event.accept()
         
         # CTRL+C: Copia righe selezionate
         elif event.matches(QKeySequence.StandardKey.Copy):
-            # Identifica automaticamente quale lista ha il focus
-            for list_id, data in self.lists.items():
-                if focused == data["table"] or data["table"].isAncestorOf(focused):
-                    if data["table"].selectedItems():
-                        self.copy_selected_rows(list_id)
-                    break
+            if self.lists[list_id]["table"].selectedItems():
+                self.copy_selected_rows(list_id)
             event.accept()
         
         else:
@@ -812,26 +882,33 @@ class CodeComparator(QMainWindow):
         # --- BOTTONI AZIONI PRINCIPALI ---
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(10)
-        
+
+        # Pulsante Inverti Liste
+        self.btn_swap = QPushButton("🔄 INVERTI LISTE")
+        self.btn_swap.setFixedHeight(60)
+        self.btn_swap.clicked.connect(self.swap_lists)
+        self.btn_swap.setToolTip("Scambia Lista 1 con Lista 2")
+
         self.btn_compare = QPushButton("🔍 CONFRONTA LISTE")
         self.btn_compare.setFixedHeight(60)
         self.btn_compare.clicked.connect(self.compare_data)
-        
+
         self.btn_export_matches = QPushButton("💾 ESPORTA CORRISPONDENZE")
         self.btn_export_matches.setFixedHeight(60)
         self.btn_export_matches.clicked.connect(lambda: self.export_results("matches"))
         self.btn_export_matches.setEnabled(False)
-        
+
         self.btn_export_mismatches = QPushButton("💾 ESPORTA MANCANTI")
         self.btn_export_mismatches.setFixedHeight(60)
         self.btn_export_mismatches.clicked.connect(lambda: self.export_results("mismatches"))
         self.btn_export_mismatches.setEnabled(False)
-        
+
         self.btn_clear_results = QPushButton("🗑️ CANCELLA RISULTATI")
         self.btn_clear_results.setFixedHeight(60)
         self.btn_clear_results.clicked.connect(self.clear_results)
         self.btn_clear_results.setEnabled(False)
-        
+
+        buttons_layout.addWidget(self.btn_swap)
         buttons_layout.addWidget(self.btn_compare)
         buttons_layout.addWidget(self.btn_export_matches)
         buttons_layout.addWidget(self.btn_export_mismatches)
@@ -842,15 +919,10 @@ class CodeComparator(QMainWindow):
         # --- SEZIONE RISULTATI (TABS) ---
         self.tabs_results = QTabWidget()
         
-        self.res_matches = QTableWidget()
-        self.res_mismatches = QTableWidget()
+        self.res_matches = self._create_result_table()
+        self.res_mismatches = self._create_result_table()
         
-        self.setup_result_table(self.res_matches)
-        self.setup_result_table(self.res_mismatches)
         
-        # Abilita sorting manuale sulle tabelle risultati
-        self.table_manager.enable_manual_sorting(self.res_matches)
-        self.table_manager.enable_manual_sorting(self.res_mismatches)
         
         self.tabs_results.addTab(self.res_matches, "✓ Corrispondenze (0)")
         self.tabs_results.addTab(self.res_mismatches, "✗ Mancanti (0)")
@@ -941,47 +1013,50 @@ class CodeComparator(QMainWindow):
 
     
 
-    def setup_result_table(self, table):
-        """Configura tabella risultati usando il TableManager"""
+    def _create_result_table(self):
+        """Crea e configura una tabella risultato"""
+        table = QTableWidget()
         self.table_manager.configure_table_widget(table)
+        self.table_manager.enable_manual_sorting(table)
+        return table
 
 
     # ============================================================
     # METODI UNIFICATI PER GESTIONE LISTE
     # ============================================================
     
-    def _update_counters(self, list_id):
+    def _update_counters(self, list_id, force: bool = False):
         """
         Aggiorna contatori righe e duplicati per una lista.
-        Metodo centralizzato chiamato ogni volta che il DataFrame cambia.
+        
+        Args:
+            list_id: Identificativo della lista (1 o 2)
+            force: Se True, aggiorna sempre anche se il conteggio non è cambiato
         """
         store = self.lists[list_id]
         df = store["df"]
         
-        # Conteggio righe
-        total_rows = len(df)
-        store["label"].setText(f"({total_rows} righe)")
-        
-        # Conteggio duplicati (solo se ci sono dati)
-        if total_rows > 0 and 'KEY_NORMALIZED' in df.columns:
-            # Filtra righe con chiave vuota o None prima di contare duplicati
-            df_with_keys = df[df['KEY_NORMALIZED'].notna() & (df['KEY_NORMALIZED'].str.strip() != "")]
-            
-            if len(df_with_keys) > 0:
-                duplicates_mask = df_with_keys['KEY_NORMALIZED'].duplicated(keep=False)
-                duplicates_count = duplicates_mask.sum()
-                duplicates_unique = df_with_keys[duplicates_mask]['KEY_NORMALIZED'].nunique()
-                
-                if duplicates_count > 0:
-                    store["duplicates_label"].setText(
-                        f"⚠️ {duplicates_unique} duplicati ({duplicates_count} righe)"
-                    )
-                else:
-                    store["duplicates_label"].setText("")
-            else:
-                store["duplicates_label"].setText("")
-        else:
+        # ✅ OTTIMIZZAZIONE: Salta se il DataFrame è vuoto e non forzato
+        if df.empty and not force:
+            store["label"].setText("(0 righe)")
             store["duplicates_label"].setText("")
+            return
+        
+        # Filtra righe con chiave vuota o None prima di contare duplicati
+        df_with_keys = self._get_df_with_valid_keys(df)
+        
+        if len(df_with_keys) == 0:
+            store["duplicates_label"].setText("")
+            return
+        
+        duplicates_unique, duplicates_count = ComparisonEngine.count_duplicates(df_with_keys)
+
+        if duplicates_count == 0:
+            store["duplicates_label"].setText("")
+            return
+        store["duplicates_label"].setText(
+            f"⚠️ {duplicates_unique} duplicati ({duplicates_count} righe)"
+        )
     
 
     def paste_data(self, list_id: int) -> None:
@@ -993,27 +1068,38 @@ class CodeComparator(QMainWindow):
         store = self.lists[list_id]
         old_row_count = len(store["df"])
         
+        # Aggiungi i nuovi dati (gestisci numerazione progressiva)
         if not store["df"].empty:
+            # ✅ Continua la numerazione delle righe originali
             last_row = store["df"]['__ORIGINAL_ROW__'].max()
             new_df['__ORIGINAL_ROW__'] = new_df['__ORIGINAL_ROW__'] + last_row
             store["df"] = pd.concat([store["df"], new_df], ignore_index=True)
         else:
+            # ✅ Prima volta: usa il DataFrame così com'è
             store["df"] = new_df
         
         self.update_table_display(store["table"], store["df"], highlight_from=old_row_count)
         self._update_counters(list_id)
-        
-        # ✅ AGGIUNTA: Reset sorting quando si incollano nuovi dati
         self.table_manager.reset_sorting(store["table"])
 
         new_rows = len(new_df)
         if old_row_count > 0:
             self.info_label.setText(f"✅ Lista {list_id}: aggiunte {new_rows} righe (totale: {len(store['df'])})")
+            logging.info(f"Lista {list_id}: incollate {new_rows} righe (totale: {len(store['df'])})")
         else:
             self.info_label.setText(f"✅ Lista {list_id} caricata: {len(store['df'])} righe")
+            logging.info(f"Lista {list_id}: caricata con {len(store['df'])} righe")
 
     def clear_data(self, list_id: int) -> None:
-        """Metodo UNIFICATO per cancellare una lista"""
+        """
+        Cancella tutti i dati di una lista specifica.
+        
+        Args:
+            list_id: Identificativo della lista (1 o 2)
+        
+        Note:
+            Questa operazione resetta anche lo storico delle eliminazioni.
+        """
         store = self.lists[list_id]
         store["df"] = pd.DataFrame(columns=self.columns + ['__ORIGINAL_ROW__'])
         store["table"].setRowCount(0)
@@ -1051,15 +1137,16 @@ class CodeComparator(QMainWindow):
         deleted_rows_data = []
         
         for row_idx in selected_rows_ui:
-            real_index = None
-            # Cerca in tutte le colonne fino a trovare un UserRole valido
-            for col_idx in range(table.columnCount()):
-                item = table.item(row_idx, col_idx)
-                if item:
-                    potential_index = item.data(Qt.ItemDataRole.UserRole)
-                    if potential_index is not None:
-                        real_index = potential_index
-                        break
+            # ✅ OTTIMIZZATO: Usa sempre la prima colonna per UserRole (più affidabile)
+            item = table.item(row_idx, 0)
+            if not item:
+                logging.warning(f"Riga {row_idx}: nessun item trovato nella prima colonna")
+                continue
+            
+            real_index = item.data(Qt.ItemDataRole.UserRole)
+            if real_index is None:
+                logging.warning(f"Riga {row_idx}: UserRole non impostato")
+                continue
             
             if real_index is not None and isinstance(real_index, int) and 0 <= real_index < len(df):
                 indices_to_delete.append(real_index)
@@ -1084,7 +1171,8 @@ class CodeComparator(QMainWindow):
         self.update_table_display(store["table"], df_updated)
         self._update_counters(list_id)
         store["btn_restore"].setEnabled(True)
-        
+
+        logging.info(f"Lista {list_id}: eliminate {len(indices_to_delete)} righe")
         self.info_label.setText(f"✅ Eliminate {len(indices_to_delete)} righe dalla Lista {list_id}")
 
     
@@ -1100,36 +1188,59 @@ class CodeComparator(QMainWindow):
         last_deleted = store["deleted"].pop()
         df = store["df"]
         
-        # Reinserisci le righe nelle posizioni originali
-        for item in last_deleted:
-            original_index = item['index']
-            row_data = pd.Series(item['data'])
+        try:
+            # Ordina per indice decrescente per evitare shift
+            sorted_deleted = sorted(last_deleted, key=lambda x: x['index'], reverse=True)
             
-            # Inserisci la riga nella posizione originale
-            if original_index <= len(df):
-                # Dividi il DataFrame e inserisci la riga
-                df = pd.concat([
-                    df.iloc[:original_index],
-                    pd.DataFrame([row_data]),
-                    df.iloc[original_index:]
-                ], ignore_index=True)
-            else:
-                # Se l'indice è oltre la fine, aggiungi in coda
-                df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
-        
-        store["df"] = df
-        
-        # Trova le posizioni delle righe ripristinate per evidenziarle
-        restored_positions = sorted([item['index'] for item in last_deleted])
-        min_position = min(restored_positions) if restored_positions else 0
-        
-        self.update_table_display(store["table"], store["df"], highlight_from=min_position)
-        self._update_counters(list_id)
+            # ✅ VALIDAZIONE: Verifica che le colonne siano ancora compatibili
+            if last_deleted:
+                sample_row = last_deleted[0]['data']
+                missing_cols = set(sample_row.keys()) - set(df.columns)
+                if missing_cols:
+                    raise ValueError(
+                        f"Impossibile ripristinare: colonne mancanti nel DataFrame corrente: {missing_cols}"
+                    )
+            
+            # Reinserisci le righe nelle posizioni originali
+            for item in sorted_deleted:
+                original_index = item['index']
+                row_data = pd.Series(item['data'])
+                
+                # Inserisci la riga nella posizione originale
+                if original_index <= len(df):
+                    df = pd.concat([
+                        df.iloc[:original_index],
+                        pd.DataFrame([row_data]),
+                        df.iloc[original_index:]
+                    ], ignore_index=True)
+                else:
+                    df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
+            
+            store["df"] = df
+            
+            # Trova le posizioni delle righe ripristinate per evidenziarle
+            restored_positions = sorted([item['index'] for item in last_deleted])
+            min_position = min(restored_positions) if restored_positions else 0
+            
+            self.update_table_display(store["table"], store["df"], highlight_from=min_position)
+            self._update_counters(list_id)
+            self.table_manager.reset_sorting(store["table"])  # AGGIUNGI QUESTA RIGA
 
-        if not store["deleted"]:
-            store["btn_restore"].setEnabled(False)
+            if not store["deleted"]:
+                store["btn_restore"].setEnabled(False)
 
-        self.info_label.setText(f"✅ Ripristinate {len(last_deleted)} righe nella Lista {list_id}")
+            self.info_label.setText(f"✅ Ripristinate {len(last_deleted)} righe nella Lista {list_id}")
+            
+        except Exception as e:
+            # Ripristina lo stato precedente in caso di errore
+            store["deleted"].append(last_deleted)
+            logging.exception(f"Errore nel ripristino righe: {e}")
+            QMessageBox.critical(
+                self,
+                "❌ Errore Ripristino",
+                f"Impossibile ripristinare le righe:\n{str(e)}\n\n"
+                "Le righe sono state mantenute nello storico eliminazioni."
+            )
     
     
 
@@ -1146,11 +1257,19 @@ class CodeComparator(QMainWindow):
             return
         
         copied_data = []
+        num_cols = table.columnCount()  # ✅ Usa il numero di colonne EFFETTIVE della tabella
         for row_idx in selected_rows:
             row_data = []
-            for col_idx in range(len(self.columns)):
+            for col_idx in range(num_cols):  
                 item = table.item(row_idx, col_idx)
                 cell_value = item.text() if item else ""
+                
+                # ✅ SOLUZIONE: Racchiudi tra virgolette se contiene newline o tab
+                if '\n' in cell_value or '\t' in cell_value or '"' in cell_value:
+                    # Escape virgolette doppie (come fa Excel)
+                    cell_value = cell_value.replace('"', '""')
+                    cell_value = f'"{cell_value}"'
+                
                 row_data.append(cell_value)
             copied_data.append("\t".join(row_data))
         
@@ -1167,7 +1286,7 @@ class CodeComparator(QMainWindow):
         df = store["df"]
         
         # Filtra righe con chiave vuota PRIMA di cercare duplicati
-        df_with_keys = df[df['KEY_NORMALIZED'].str.strip() != ""].copy()
+        df_with_keys = self._get_df_with_valid_keys(df)
         
         if df_with_keys.empty:
             QMessageBox.information(self, "Nessun Dato", 
@@ -1225,8 +1344,17 @@ class CodeComparator(QMainWindow):
         key_to_visual_row = {}
         
         for visual_row in range(table_widget.rowCount()):
-            # Trova l'item della colonna chiave
-            key_col_index = self.columns.index(self.key_column)
+            # Trova l'item della colonna chiave (con protezione da cambio preset)
+            try:
+                key_col_index = self.columns.index(self.key_column)
+            except ValueError:
+                QMessageBox.warning(
+                    self, 
+                    "⚠️ Errore Configurazione",
+                    f"La colonna chiave '{self.key_column}' non esiste più.\n"
+                    "Probabilmente hai cambiato preset dopo aver caricato i dati."
+                )
+                return
             item = table_widget.item(visual_row, key_col_index)
             
             if item:
@@ -1318,22 +1446,72 @@ class CodeComparator(QMainWindow):
         # Mostra il menu nella posizione del cursore
         menu.exec(store["table"].viewport().mapToGlobal(pos))
 
+
+    def _get_df_with_valid_keys(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filtra il DataFrame escludendo righe con chiavi vuote o None.
+        
+        Args:
+            df: DataFrame con colonna KEY_NORMALIZED
+        
+        Returns:
+            DataFrame filtrato con solo chiavi valide
+        
+        Example:
+            >>> df = pd.DataFrame({'KEY_NORMALIZED': ['ABC123', None, '', 'XYZ789']})
+            >>> valid_df = self._get_df_with_valid_keys(df)
+            >>> len(valid_df)  # Restituisce 2 (solo ABC123 e XYZ789)
+        """
+        if df.empty or 'KEY_NORMALIZED' not in df.columns:
+            return pd.DataFrame()
+        
+        return df[
+            df['KEY_NORMALIZED'].notna() & 
+            (df['KEY_NORMALIZED'].astype(str).str.strip() != "")
+        ].copy()
+
+
     # ============================================================
     # UTILITÀ
     # ============================================================
 
     def normalize_key(self, key_value) -> str:
-        """Normalizza la colonna chiave rimuovendo caratteri non alfanumerici"""
+        """
+        Normalizza la colonna chiave rimuovendo caratteri non alfanumerici.
+        
+        Args:
+            key_value: Valore da normalizzare
+        
+        Returns:
+            Stringa normalizzata (solo caratteri alfanumerici in maiuscolo)
+            Restituisce stringa vuota se il valore è None/NaN o vuoto dopo la normalizzazione
+        """
         if pd.isna(key_value):
             return ""
+        
         key_str = str(key_value).strip()
-        return ''.join(c for c in key_str if c.isalnum()).upper()
+        
+        # ✅ MIGLIORAMENTO: Gestisci esplicitamente stringhe vuote
+        if not key_str:
+            return ""
+        
+        normalized = ''.join(c for c in key_str if c.isalnum()).upper()
+        
+        # ✅ MIGLIORAMENTO: Log per debug se la normalizzazione rimuove tutto
+        if not normalized and key_str:
+            logging.debug(f"Chiave '{key_str}' normalizzata in stringa vuota")
+        
+        return normalized
 
-            
+    
+    def _get_display_columns(self) -> list:
+        """Restituisce solo le colonne visibili (esclude colonne tecniche)"""
+        return [col for col in self.columns if not col.startswith('__')]
         
     def _parse_clipboard_text(self, text):
         """
         Trasforma il testo della clipboard in DataFrame grezzo.
+        Gestisce sia celle con virgolette (Excel) sia senza (fallback).
         
         Args:
             text: Testo copiato dalla clipboard
@@ -1342,18 +1520,53 @@ class CodeComparator(QMainWindow):
             DataFrame grezzo o None in caso di errore
         """
         try:
-            df = pd.read_csv(io.StringIO(text), sep='\t', header=None, dtype=str)
+            # ✅ TENTATIVO 1: Usa csv.reader (gestisce virgolette)
+            rows = []
+            reader = csv.reader(
+                io.StringIO(text), 
+                delimiter='\t',
+                quotechar='"',
+                doublequote=True,
+                skipinitialspace=False
+            )
             
-            # ✅ AGGIUNTA: Traccia il numero di riga originale
+            for row in reader:
+                rows.append(row)
+            
+            if not rows:
+                raise pd.errors.EmptyDataError("Nessuna riga trovata")
+            
+            # ✅ VERIFICA: Controlla se ci sono righe con meno colonne del previsto
+            expected_cols = len(self.columns)
+            # ✅ COSTANTE: Soglia minima per considerare una riga come incompleta
+            MIN_COLUMNS_THRESHOLD = max(1, expected_cols // 2)  # Almeno metà delle colonne
+            processed_rows = []
+            
+            for row in rows:
+                num_cols = len(row)
+                
+                # Riga completa
+                if num_cols >= expected_cols:
+                    processed_rows.append(row[:expected_cols])
+                
+                # Riga incompleta: uniscila alla precedente (fallback per righe senza virgolette)
+                elif processed_rows:
+                    # Unisci all'ultima cella dell'ultima riga
+                    processed_rows[-1][-1] += '\n' + '\t'.join(row)
+                else:
+                    # Prima riga malformata: ignorala
+                    logging.warning(f"Prima riga malformata ignorata: {row}")
+            
+            if not processed_rows:
+                raise pd.errors.EmptyDataError("Nessuna riga valida trovata")
+            
+            # Converti in DataFrame
+            df = pd.DataFrame(processed_rows, dtype=str)
+            
+            # ✅ Traccia il numero di riga originale
             df['__ORIGINAL_ROW__'] = range(1, len(df) + 1)
             
-            # Adatta le colonne (aggiungi colonne vuote se mancanti)
-            for i in range(len(df.columns) - 1, len(self.columns)):  # -1 per escludere __ORIGINAL_ROW__
-                df[i] = ""
-            
-            # Seleziona le colonne necessarie + la colonna tecnica
-            cols_to_keep = list(range(len(self.columns))) + ['__ORIGINAL_ROW__']
-            df = df[cols_to_keep]
+            # Assegna nomi colonne
             df.columns = self.columns + ['__ORIGINAL_ROW__']
             
             return df
@@ -1363,18 +1576,116 @@ class CodeComparator(QMainWindow):
                                "I dati copiati sono vuoti o non validi.")
             return None
             
-        except pd.errors.ParserError:
-            QMessageBox.warning(self, "Formato Non Valido", 
-                               "I dati non sono in formato tabella. Verifica di aver copiato celle da Excel.")
-            return None
-            
         except Exception as e:
             logging.exception("Errore parsing clipboard")
             QMessageBox.critical(self, "Errore", 
                                f"Errore nel parsing dei dati:\n{str(e)}")
             return None
         
+    
+    def _handle_header_detection(self, df: pd.DataFrame) -> pd.DataFrame | None:
+        """
+        Gestisce il rilevamento automatico dell'intestazione.
         
+        Args:
+            df: DataFrame da validare
+        
+        Returns:
+            DataFrame con intestazione applicata, o None se l'utente annulla
+        
+        Note:
+            Questo metodo:
+            1. Controlla se la prima riga sembra un'intestazione
+            2. Chiede conferma all'utente
+            3. Applica l'intestazione se confermato
+        """
+        if df.empty:
+            return df
+        
+        first_row_key = df.iloc[0][self.key_column]
+        first_row_key_norm = self.normalize_key(first_row_key)
+        
+        # Determina se la prima riga è un'intestazione
+        is_header = (
+            not first_row_key_norm or
+            first_row_key_norm.isalpha() or
+            first_row_key_norm == self.normalize_key(self.key_column)
+        )
+        
+        if not is_header:
+            return df  # Non è un'intestazione, continua
+        
+        # Chiedi conferma all'utente
+        reply = QMessageBox.question(
+            self,
+            "📋 Intestazione Rilevata",
+            f"La prima riga sembra essere un'intestazione:\n"
+            f"Valore colonna chiave: '{first_row_key}'\n\n"
+            f"Vuoi usare la prima riga come intestazione ed eliminarla dai dati?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.No:
+            return None  # Utente ha annullato
+        
+        # Applica intestazione
+        return self._apply_header_from_first_row(df)
+        
+        
+    def _apply_header_from_first_row(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Applica l'intestazione dalla prima riga del DataFrame.
+        
+        Args:
+            df: DataFrame con intestazione nella prima riga
+        
+        Returns:
+            DataFrame con intestazione applicata e prima riga rimossa
+        
+        Note:
+            Questo metodo:
+            1. Estrae i nomi colonna dalla prima riga
+            2. Aggiorna tutte le strutture dati (preset, tabelle, TableManager)
+            3. Salva le modifiche su disco
+        """
+        # Estrai nomi colonne dalla prima riga
+        new_columns = [
+            str(df.iloc[0][col]).strip() 
+            if not pd.isna(df.iloc[0][col]) and str(df.iloc[0][col]).strip()
+            else col
+            for col in self.columns
+        ]
+        
+        # Rimuovi prima riga e aggiorna colonne
+        df = df.iloc[1:].reset_index(drop=True)
+        df.columns = new_columns + ['__ORIGINAL_ROW__']
+        
+        # Aggiorna colonna chiave
+        try:
+            old_key_idx = list(self.presets[self.current_preset]["columns"]).index(self.key_column)
+            self.key_column = new_columns[old_key_idx]
+        except (ValueError, IndexError):
+            self.key_column = new_columns[0] if new_columns else self.key_column
+        
+        self.columns = new_columns
+        self.table_manager.columns = new_columns
+        
+                
+        # Aggiorna tutte le tabelle
+        for list_id in [1, 2]:
+            table = self.lists[list_id]["table"]
+            table.setColumnCount(len(self.columns))
+            table.setHorizontalHeaderLabels(self.columns)
+        
+        for result_table in [self.res_matches, self.res_mismatches]:
+            result_table.setColumnCount(len(self.columns))
+            result_table.setHorizontalHeaderLabels(self.columns)
+        
+        self.info_label.setText(
+            f"✅ Intestazione applicata: colonna chiave = '{self.key_column}'"
+        )
+        
+        return df
         
     def _validate_imported_df(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """
@@ -1397,67 +1708,10 @@ class CodeComparator(QMainWindow):
             )
             return None
         
-        # Controllo intelligente per intestazione nella prima riga
-        if len(df) > 0:
-            first_row_key = df.iloc[0][self.key_column]
-            first_row_key_norm = self.normalize_key(first_row_key)
-            
-            # Determina se la prima riga è un'intestazione
-            is_header = (
-                not first_row_key_norm or  # Chiave vuota
-                first_row_key_norm.isalpha() or  # Solo lettere
-                first_row_key_norm == self.normalize_key(self.key_column)  # Nome colonna
-            )
-            
-            if is_header:
-                reply = QMessageBox.question(
-                    self,
-                    "📋 Intestazione Rilevata",
-                    f"La prima riga sembra essere un'intestazione:\n"
-                    f"Valore colonna chiave: '{first_row_key}'\n\n"
-                    f"Vuoi usare la prima riga come intestazione ed eliminarla dai dati?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                
-                if reply == QMessageBox.StandardButton.Yes:
-                    # Estrai nomi colonne dalla prima riga
-                    new_columns = [
-                        str(df.iloc[0][col]).strip() if not pd.isna(df.iloc[0][col]) 
-                        and str(df.iloc[0][col]).strip() else col
-                        for col in self.columns
-                    ]
-                    
-                    # Rimuovi prima riga e aggiorna colonne
-                    df = df.iloc[1:].reset_index(drop=True)
-                    df.columns = new_columns + ['__ORIGINAL_ROW__']
-                    
-                    # Aggiorna colonna chiave
-                    try:
-                        old_key_idx = list(self.presets[self.current_preset]["columns"]).index(self.key_column)
-                        self.key_column = new_columns[old_key_idx]
-                    except (ValueError, IndexError):
-                        self.key_column = new_columns[0] if new_columns else self.key_column
-                    
-                    self.columns = new_columns
-                    
-                    # ✅ AGGIORNAMENTO: Aggiorna TableManager con nuove colonne
-                    self.table_manager.columns = new_columns
-                    
-                    # Aggiorna tutte le tabelle
-                    for list_id in [1, 2]:
-                        table = self.lists[list_id]["table"]
-                        table.setColumnCount(len(self.columns))
-                        table.setHorizontalHeaderLabels(self.columns)
-                    
-                    for result_table in [self.res_matches, self.res_mismatches]:
-                        result_table.setColumnCount(len(self.columns))
-                        result_table.setHorizontalHeaderLabels(self.columns)
-                    
-                    self.info_label.setText(
-                        f"✅ Intestazione applicata: colonna chiave = '{self.key_column}'"
-                    )
-                else:
-                    return None
+        # Gestione intestazione
+        df = self._handle_header_detection(df)
+        if df is None:
+            return None  # Utente ha annullato
         
         # Normalizza colonna chiave per tutte le righe
         df['KEY_NORMALIZED'] = df[self.key_column].apply(self.normalize_key)
@@ -1487,7 +1741,7 @@ class CodeComparator(QMainWindow):
         clipboard = QApplication.clipboard()
         text = clipboard.text()
         
-        if not text:
+        if not text or not text.strip():
             QMessageBox.warning(self, "Clipboard Vuota", 
                               "La clipboard è vuota. Copia prima i dati da Excel.")
             return None
@@ -1505,14 +1759,19 @@ class CodeComparator(QMainWindow):
     def update_table_display(self, table_widget: QTableWidget, df: pd.DataFrame, 
                             highlight_from: int | None = None) -> None:
         """Popola la QTableWidget con i dati del DataFrame"""
-        display_df = df[self.columns] if 'KEY_NORMALIZED' in df.columns else df
+        display_columns = self._get_display_columns()
+        display_df = df[display_columns] if all(col in df.columns for col in display_columns) else df
         
-        if len(display_df) > 1000:
+        show_cursor = len(display_df) > 1000
+        if show_cursor:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         
+        # Salva stato sorting e disabilitalo temporaneamente
+        was_sorting_enabled = table_widget.isSortingEnabled()
+        table_widget.setSortingEnabled(False)
+        table_widget.setUpdatesEnabled(False)
+        
         try:
-            table_widget.setSortingEnabled(False)
-            table_widget.setUpdatesEnabled(False)
             table_widget.setRowCount(len(display_df))
             
             is_res = table_widget in [self.res_matches, self.res_mismatches]
@@ -1520,19 +1779,23 @@ class CodeComparator(QMainWindow):
             color_highlight = QColor(HIGHLIGHT_COLOR)
             color_white = QColor(WHITE_COLOR)
             
+            # ✅ OTTIMIZZAZIONE: Pre-alloca tutti gli item in una volta sola
+            for i in range(len(display_df)):
+                for j in range(len(display_columns)):
+                    if not table_widget.item(i, j):
+                        table_widget.setItem(i, j, QTableWidgetItem())
+
+            # ✅ OTTIMIZZAZIONE: Popola i dati senza ricreare gli item
             for i, row in enumerate(display_df.itertuples(index=True)):
-                for j, col_name in enumerate(self.columns):
+                real_index = row.Index  # ✅ Usa l'indice esplicito del DataFrame
+                for j, col_name in enumerate(display_columns):
                     value = row[j + 1] if j + 1 < len(row) else ""
                     
                     item = table_widget.item(i, j)
-                    if not item:
-                        item = QTableWidgetItem()
-                        table_widget.setItem(i, j, item)
-                    
                     val_str = str(value) if not pd.isna(value) else ""
                     item.setText(val_str)
-                    item.setToolTip(val_str)
-                    item.setData(Qt.ItemDataRole.UserRole, row[0])
+                    item.setToolTip(val_str if len(val_str) > 30 else "")
+                    item.setData(Qt.ItemDataRole.UserRole, real_index)  # ✅ CORRETTO
                     
                     if highlight_from is not None and i >= highlight_from:
                         item.setBackground(color_highlight)
@@ -1540,11 +1803,21 @@ class CodeComparator(QMainWindow):
                         item.setBackground(bg_color)
                     else:
                         item.setBackground(color_white)
-            
-            table_widget.setUpdatesEnabled(True)
+        
+        except Exception as e:
+            logging.exception(f"Errore in update_table_display: {e}")
+            QMessageBox.critical(
+                self,
+                "❌ Errore Visualizzazione",
+                f"Impossibile visualizzare i dati:\n{str(e)}"
+            )
         
         finally:
-            if len(display_df) > 1000:
+            table_widget.setUpdatesEnabled(True)
+            # Ripristina stato sorting originale
+            table_widget.setSortingEnabled(was_sorting_enabled)
+            
+            if show_cursor:
                 QApplication.restoreOverrideCursor()
 
     # ============================================================
@@ -1561,6 +1834,8 @@ class CodeComparator(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.info_label.setText("⏳ Confronto in corso...")
         QApplication.processEvents()
+        
+        logging.info(f"Inizio confronto: Lista1={len(self.lists[1]['df'])} righe, Lista2={len(self.lists[2]['df'])} righe")
         
         try:
             matches, mismatches, stats = ComparisonEngine.compare(
@@ -1618,39 +1893,109 @@ class CodeComparator(QMainWindow):
                 f"📊 Totale Lista 1: {len(self.lists[1]['df'])}"
             )
             
+        except KeyError as e:
+            logging.exception(f"Errore chiave mancante: {e}")
+            QMessageBox.critical(
+                self, 
+                "❌ Errore Configurazione", 
+                f"Colonna mancante nel confronto:\n{str(e)}\n\n"
+                f"Verifica che la configurazione corrisponda ai dati caricati."
+            )
         except Exception as e:
-            logging.error(f"Errore in compare_data: {e}")
-            QMessageBox.critical(self, "Errore", 
-                               f"Errore durante il confronto:\n{str(e)}")
+            logging.exception(f"Errore in compare_data: {e}")
+            QMessageBox.critical(
+                self, 
+                "❌ Errore", 
+                f"Errore durante il confronto:\n{str(e)}"
+            )
         finally:
             QApplication.restoreOverrideCursor()
 
-    def clear_results(self) -> None:
-        """Cancella i risultati del confronto"""
+    def clear_results(self, confirm: bool = True) -> None:
+        """Cancella i risultati del confronto
+        
+        Args:
+            confirm: Se True, chiede conferma all'utente (default: True)
+        """
+        if confirm:
+            reply = QMessageBox.question(
+                self, 
+                "Conferma Cancellazione",
+                "Vuoi cancellare i risultati del confronto?\n\n"
+                "Le liste originali (Lista 1 e Lista 2) non verranno modificate.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        
+        self.res_matches.setRowCount(0)
+        self.res_mismatches.setRowCount(0)
+        
+        self.tabs_results.setTabText(0, "✓ Corrispondenze (0)")
+        self.tabs_results.setTabText(1, "✗ Mancanti (0)")
+        
+        self.btn_export_matches.setEnabled(False)
+        self.btn_export_mismatches.setEnabled(False)
+        self.btn_clear_results.setEnabled(False)
+        
+        self.matches_df = None
+        self.mismatches_df = None
+        
+        self.info_label.setText("✓ Risultati cancellati. Pronto per un nuovo confronto.")
+            
+            
+    def swap_lists(self) -> None:
+        """Inverte Lista 1 con Lista 2"""
+        # Verifica se almeno una lista ha dati
+        if self.lists[1]["df"].empty and self.lists[2]["df"].empty:
+            QMessageBox.information(self, "Nessun Dato", 
+                                  "Entrambe le liste sono vuote. Nulla da invertire!")
+            return
+        
+        # Chiedi conferma
         reply = QMessageBox.question(
-            self, 
-            "Conferma Cancellazione",
-            "Vuoi cancellare i risultati del confronto?\n\n"
-            "Le liste originali (Lista 1 e Lista 2) non verranno modificate.",
+            self,
+            "🔄 Conferma Inversione",
+            "Vuoi invertire Lista 1 con Lista 2?\n\n"
+            "• Lista 1 (Worklist) diventerà Lista 2 (Confronto)\n"
+            "• Lista 2 (Confronto) diventerà Lista 1 (Worklist)\n\n"
+            "I risultati del confronto verranno cancellati.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.StandardButton.Yes:
-            self.res_matches.setRowCount(0)
-            self.res_mismatches.setRowCount(0)
-            
-            self.tabs_results.setTabText(0, "✓ Corrispondenze (0)")
-            self.tabs_results.setTabText(1, "✗ Mancanti (0)")
-            
-            self.btn_export_matches.setEnabled(False)
-            self.btn_export_mismatches.setEnabled(False)
-            self.btn_clear_results.setEnabled(False)
-            
-            self.matches_df = None
-            self.mismatches_df = None
-            
-            self.info_label.setText("✓ Risultati cancellati. Pronto per un nuovo confronto.")
+        if reply == QMessageBox.StandardButton.No:
+            return
+        
+        # Scambia i DataFrame
+        temp_df = self.lists[1]["df"].copy()
+        self.lists[1]["df"] = self.lists[2]["df"].copy()
+        self.lists[2]["df"] = temp_df
+        
+        # Scambia lo storico eliminazioni
+        temp_deleted = self.lists[1]["deleted"].copy()
+        self.lists[1]["deleted"] = self.lists[2]["deleted"].copy()
+        self.lists[2]["deleted"] = temp_deleted
+        
+        # Aggiorna le tabelle
+        for list_id in [1, 2]:
+            store = self.lists[list_id]
+            self.update_table_display(store["table"], store["df"])
+            self._update_counters(list_id)
+            store["btn_restore"].setEnabled(len(store["deleted"]) > 0)
+        
+        # Cancella i risultati
+        self.clear_results(confirm=False)
+        
+        self.info_label.setText("✓ Liste invertite con successo")
+        
+        QMessageBox.information(self, "✓ Inversione Completata",
+            "Le liste sono state invertite:\n\n"
+            f"• Lista 1: {len(self.lists[1]['df'])} righe\n"
+            f"• Lista 2: {len(self.lists[2]['df'])} righe")
+    
 
     # ============================================================
     # ESPORTAZIONE UNIFICATA
@@ -1717,6 +2062,27 @@ class CodeComparator(QMainWindow):
                 return filepath
             counter += 1
 
+    @staticmethod
+    def _calculate_excel_column_width(column_name):
+        """
+        Calcola la larghezza ottimale per una colonna Excel basandosi sul nome.
+        La ricerca è case-insensitive.
+        
+        Args:
+            column_name: Nome della colonna (es. "ISBN", "Titolo", "autore")
+        
+        Returns:
+            int: Larghezza in unità Excel (default 20)
+        """
+        col_name_upper = column_name.upper()
+        
+        for target_width, keywords in EXCEL_COLUMN_WIDTHS.items():
+            if any(kw in col_name_upper for kw in keywords):
+                return target_width
+        
+        return 20  # Default
+
+
     def _export_to_formatted_excel(self, df: pd.DataFrame, filepath: str, sheet_name: str):
         """
         Esporta DataFrame in Excel con formattazione professionale.
@@ -1766,14 +2132,7 @@ class CodeComparator(QMainWindow):
             cell.alignment = alignment
             
             # Calcolo larghezza intelligente basato sul nome colonna
-            col_name_upper = column_name.upper()
-            width = 20  # Default
-
-            for target_width, keywords in EXCEL_COLUMN_WIDTHS.items():
-                if any(kw in col_name_upper for kw in keywords):
-                    width = target_width
-                    break
-
+            width = self._calculate_excel_column_width(column_name)
             ws.column_dimensions[get_column_letter(col_idx)].width = width
             
         
@@ -1809,6 +2168,23 @@ class CodeComparator(QMainWindow):
 
     def open_settings(self):
         """Apre la finestra di dialogo delle impostazioni"""
+        # Controlla se ci sono dati caricati
+        has_data = not self.lists[1]["df"].empty or not self.lists[2]["df"].empty
+        has_results = self.matches_df is not None or self.mismatches_df is not None
+        
+        if has_data or has_results:
+            reply = QMessageBox.warning(
+                self,
+                "⚠️ Attenzione",
+                "Cambiare configurazione cancellerà TUTTI i dati caricati e i risultati.\n\n"
+                "Vuoi continuare?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        
         dialog = SettingsDialog(self.presets, self.current_preset, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             result = dialog.get_result()
@@ -1832,8 +2208,8 @@ class CodeComparator(QMainWindow):
                 # --- SALVA AUTOMATICAMENTE SU DISCO ---
                 self.save_presets()
             
-            # Aggiorna TableManager con nuove colonne
-            self.table_manager = TableManager(self.columns)
+            # Aggiorna solo le colonne del TableManager esistente
+            self.table_manager.columns = self.columns
             
             # Resetta le liste
             self.reset_all_data()
@@ -1863,14 +2239,9 @@ class CodeComparator(QMainWindow):
             # Reset pulsanti ripristina
             store["btn_restore"].setEnabled(False)
         
-        # Reset risultati con riconfigurazione completa
-        self.table_manager.configure_table_widget(self.res_matches)
-        self.table_manager.enable_manual_sorting(self.res_matches)
+        # Reset risultati
         self.table_manager.reset_sorting(self.res_matches)
         self.res_matches.setRowCount(0)
-        
-        self.table_manager.configure_table_widget(self.res_mismatches)
-        self.table_manager.enable_manual_sorting(self.res_mismatches)
         self.table_manager.reset_sorting(self.res_mismatches)
         self.res_mismatches.setRowCount(0)
         
@@ -1894,6 +2265,7 @@ class CodeComparator(QMainWindow):
         self.setStyleSheet(APP_STYLESHEET)
         
         # Imposta gli object names per i pulsanti
+        self.btn_swap.setObjectName("btn_swap")
         self.btn_compare.setObjectName("btn_compare")
         self.btn_export_matches.setObjectName("btn_export_matches")
         self.btn_export_mismatches.setObjectName("btn_export_mismatches")
