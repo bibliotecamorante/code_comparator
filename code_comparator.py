@@ -578,6 +578,12 @@ class TableManager:
         header.setSortIndicatorShown(False)
         header.setSectionsClickable(True)
         
+        # ✅ CORREZIONE: Disconnetti tutti i signal precedenti per evitare accumulo
+        try:
+            header.sectionClicked.disconnect()
+        except TypeError:
+            pass  # Nessun signal collegato, ok
+        
         def on_header_clicked(logical_index):
             # Determina la direzione dell'ordinamento
             if self._sort_column == logical_index:
@@ -593,12 +599,14 @@ class TableManager:
             
             # Aggiorna le intestazioni con frecce Unicode
             for col in range(table.columnCount()):
-                original_text = self.columns[col]
-                if col == logical_index:
-                    arrow = " ▲" if self._sort_order == Qt.SortOrder.AscendingOrder else " ▼"
-                    table.horizontalHeaderItem(col).setText(original_text + arrow)
-                else:
-                    table.horizontalHeaderItem(col).setText(original_text)
+                # ✅ CORREZIONE: Verifica che l'indice sia valido per le colonne correnti
+                if col < len(self.columns):
+                    original_text = self.columns[col]
+                    if col == logical_index:
+                        arrow = " ▲" if self._sort_order == Qt.SortOrder.AscendingOrder else " ▼"
+                        table.horizontalHeaderItem(col).setText(original_text + arrow)
+                    else:
+                        table.horizontalHeaderItem(col).setText(original_text)
         
         header.sectionClicked.connect(on_header_clicked)
 
@@ -634,6 +642,10 @@ class CodeComparator(QMainWindow):
                 "key_column": "Inventario",
                 "columns": ["Inventario", "Sezione", "Collocazione", "Specificazione", 
                            "Sequenza", "Descrizione ISBD", "Legami"]
+            },
+            "ISBN + TITOLO (ISBN, Titolo)": {
+                "key_column": "ISBN",
+                "columns": ["ISBN", "TITOLO"]
             }
         }
         
