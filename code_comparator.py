@@ -39,10 +39,9 @@ def global_exception_handler(exctype, value, tb):
     if QApplication.instance():
         QMessageBox.critical(
             None, 
-            "❌ Errore Critico",
-            f"Si è verificato un errore imprevisto:\n\n{value}\n\n"
-            "L'applicazione potrebbe non funzionare correttamente.\n"
-            "Controlla il log per maggiori dettagli."
+            "⌠Errore Critico",
+            f"Si è verificato un errore imprevisto:\n\n{str(value)}\n\n"
+            "L'applicazione potrebbe non funzionare correttamente."
         )
     
     # Chiama il gestore predefinito per mantenere il traceback
@@ -83,6 +82,9 @@ EXCEL_COLUMN_WIDTHS = {
 }
 
 MAX_COLUMNS = 7
+DEFAULT_EXCEL_MIN_ROWS = 100  # Righe minime in Excel export
+DEFAULT_ZOOM_LEVEL = 110  # Zoom Excel
+MIN_COLUMNS_PARSE_THRESHOLD = 0.5  # Soglia parsing (50% colonne minime)
 
 # ============================================================
 # GLOBAL CSS STYLES
@@ -797,19 +799,19 @@ class CodeComparator(QMainWindow):
             
             logging.info(f"Preset salvati in: {self.config_file}")  
             
-        except PermissionError:
-            QMessageBox.warning(
+        except PermissionError as e:
+            QMessageBox.critical(
                 self,
-                "Errore Permessi",
-                f"Impossibile scrivere su:\n{self.config_file}\n\n"
-                "Verifica i permessi della cartella."
+                "⌠Errore Critico - Permessi",
+                f"Impossibile scrivere su:\n{self.config_file}\n\n{str(e)}"
             )
-            logging.error(f"PermissionError salvando preset in: {self.config_file}")
+            logging.exception(f"PermissionError salvando preset: {e}")
         except Exception as e:
-            QMessageBox.warning(
+            QMessageBox.critical(
                 self, 
-                "Errore Salvataggio",
-                f"Impossibile salvare i preset:\n{str(e)}\n\nI preset saranno persi alla chiusura."
+                "⌠Errore Critico - Salvataggio",
+                f"Impossibile salvare i preset:\n\n{str(e)}\n\n"
+                "I preset saranno persi alla chiusura."
             )
             logging.exception(f"Errore nel salvataggio dei preset: {e}")
 
@@ -861,13 +863,13 @@ class CodeComparator(QMainWindow):
             
             
         except json.JSONDecodeError as e:
-            QMessageBox.warning(
+            QMessageBox.critical(
                 self,
-                "⚠️ File Corrotto",
-                f"Il file presets.json è corrotto:\n{str(e)}\n\n"
+                "⌠Errore Critico - File Corrotto",
+                f"Il file presets.json è corrotto:\n\n{str(e)}\n\n"
                 "Tentativo di ripristino dal backup..."
             )
-            logging.error(f"Errore parsing JSON: {e}")
+            logging.exception(f"Errore parsing JSON: {e}")
             self._restore_backup()
             
         except Exception as e:
@@ -911,6 +913,12 @@ class CodeComparator(QMainWindow):
                 # Riprova a caricare
                 self.load_presets()
             except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "⌠Errore Critico - Ripristino Backup",
+                    f"Impossibile ripristinare il backup:\n\n{str(e)}\n\n"
+                    "Verifica manualmente il file presets.json"
+                )
                 logging.exception(f"Impossibile ripristinare il backup: {e}")
     
     # ============================================================
@@ -1187,7 +1195,7 @@ class CodeComparator(QMainWindow):
             store["df"] = new_df
         
         self.update_table_display(store["table"], store["df"], highlight_from=old_row_count)
-        self._update_counters(list_id)
+        self._update_counters(list_id, force=True)  # Sempre aggiorna dopo paste
         self.table_manager.reset_sorting(store["table"])
 
         new_rows = len(new_df)
@@ -1649,26 +1657,15 @@ class CodeComparator(QMainWindow):
             if not rows:
                 raise pd.errors.EmptyDataError("Nessuna riga trovata")
             
-            # ✅ VERIFICA: Controlla se ci sono righe con meno colonne del previsto
             expected_cols = len(self.columns)
-            # ✅ COSTANTE: Soglia minima per considerare una riga come incompleta
-            MIN_COLUMNS_THRESHOLD = max(1, expected_cols // 2)  # Almeno metà delle colonne
             processed_rows = []
-            
+
             for row in rows:
-                num_cols = len(row)
-                
-                # Riga completa
-                if num_cols >= expected_cols:
+                if len(row) >= expected_cols:
                     processed_rows.append(row[:expected_cols])
-                
-                # Riga incompleta: uniscila alla precedente (fallback per righe senza virgolette)
                 elif processed_rows:
-                    # Unisci all'ultima cella dell'ultima riga
+                    # Unisci riga incompleta alla precedente
                     processed_rows[-1][-1] += '\n' + '\t'.join(row)
-                else:
-                    # Prima riga malformata: ignorala
-                    logging.warning(f"Prima riga malformata ignorata: {row}")
             
             if not processed_rows:
                 raise pd.errors.EmptyDataError("Nessuna riga valida trovata")
@@ -1690,9 +1687,12 @@ class CodeComparator(QMainWindow):
             return None
             
         except Exception as e:
-            logging.exception("Errore parsing clipboard")
-            QMessageBox.critical(self, "Errore", 
-                               f"Errore nel parsing dei dati:\n{str(e)}")
+            QMessageBox.critical(
+                self, 
+                "⌠Errore Critico - Parsing",
+                f"Errore nel parsing dei dati:\n\n{str(e)}"
+            )
+            logging.exception(f"Errore parsing clipboard: {e}")
             return None
         
     
@@ -1872,8 +1872,8 @@ class CodeComparator(QMainWindow):
     def update_table_display(self, table_widget: QTableWidget, df: pd.DataFrame, 
                             highlight_from: int | None = None) -> None:
         """Popola la QTableWidget con i dati del DataFrame"""
-        display_columns = self._get_display_columns()
-        display_df = df[display_columns] if all(col in df.columns for col in display_columns) else df
+        display_columns = [col for col in self.columns if col in df.columns and not col.startswith('__')]
+        display_df = df[display_columns]
         
         show_cursor = len(display_df) > 1000
         if show_cursor:
@@ -1919,12 +1919,12 @@ class CodeComparator(QMainWindow):
                         item.setBackground(color_white)
         
         except Exception as e:
-            logging.exception(f"Errore in update_table_display: {e}")
             QMessageBox.critical(
                 self,
-                "❌ Errore Visualizzazione",
-                f"Impossibile visualizzare i dati:\n{str(e)}"
+                "⌠Errore Critico - Visualizzazione",
+                f"Impossibile visualizzare i dati:\n\n{str(e)}"
             )
+            logging.exception(f"Errore in update_table_display: {e}")
         
         finally:
             table_widget.setUpdatesEnabled(True)
@@ -2008,20 +2008,20 @@ class CodeComparator(QMainWindow):
             )
             
         except KeyError as e:
-            logging.exception(f"Errore chiave mancante: {e}")
             QMessageBox.critical(
                 self, 
-                "❌ Errore Configurazione", 
-                f"Colonna mancante nel confronto:\n{str(e)}\n\n"
+                "⌠Errore Critico - Configurazione", 
+                f"Colonna mancante nel confronto:\n\n{str(e)}\n\n"
                 f"Verifica che la configurazione corrisponda ai dati caricati."
             )
+            logging.exception(f"Errore chiave mancante: {e}")
         except Exception as e:
-            logging.exception(f"Errore in compare_data: {e}")
             QMessageBox.critical(
                 self, 
-                "❌ Errore", 
-                f"Errore durante il confronto:\n{str(e)}"
+                "⌠Errore Critico - Confronto", 
+                f"Errore durante il confronto:\n\n{str(e)}"
             )
+            logging.exception(f"Errore in compare_data: {e}")
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -2146,9 +2146,12 @@ class CodeComparator(QMainWindow):
             self.info_label.setText(f"✓ Esportati {len(df)} {sheet_name.lower()}: {os.path.basename(file_path)}")
             
         except Exception as e:
-            logging.error(f"Errore in export_results: {e}")
-            QMessageBox.critical(self, "Errore", 
-                               f"Errore durante l'esportazione:\n{str(e)}")
+            QMessageBox.critical(
+                self, 
+                "⌠Errore Critico - Esportazione",
+                f"Errore durante l'esportazione:\n\n{str(e)}"
+            )
+            logging.exception(f"Errore in export_results: {e}")
 
     def _get_unique_filepath(self, directory, base_name, extension):
         """
@@ -2229,7 +2232,8 @@ class CodeComparator(QMainWindow):
         ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
         ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.freeze_panes = 'A2'
-        ws.sheet_view.zoomScale = 110
+        ws.sheet_view.zoomScale = DEFAULT_ZOOM_LEVEL
+
         
         # ====================================================================
         # STILI
@@ -2260,7 +2264,8 @@ class CodeComparator(QMainWindow):
         # SCRITTURA DATI CON ALTEZZA UNIFORME (CICLO UNIFICATO)
         # ====================================================================
         # Calcola il numero totale di righe da formattare (minimo 100 per consistenza visiva)
-        total_rows = max(len(df) + 1, 100)
+        total_rows = max(len(df) + 1, DEFAULT_EXCEL_MIN_ROWS)
+
 
         # Imposta l'altezza per TUTTE le righe (anche quelle vuote)
         for row_idx in range(2, total_rows + 1):
@@ -2360,9 +2365,9 @@ class CodeComparator(QMainWindow):
             store["df"] = pd.DataFrame(columns=self.columns)
             store["deleted"].clear()
             
-            # Reset tabelle input con riconfigurare completa
-            self.table_manager.configure_table_widget(store["table"])
-            self.table_manager.enable_manual_sorting(store["table"])
+            # Reset tabelle input
+            store["table"].setColumnCount(len(self.columns))
+            store["table"].setHorizontalHeaderLabels(self.columns)
             self.table_manager.reset_sorting(store["table"])
             store["table"].setRowCount(0)
             
