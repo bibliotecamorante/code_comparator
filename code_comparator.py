@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QHeaderView, QTabWidget,
                              QMessageBox, QFileDialog, QMenu, QDialog, 
                              QLineEdit, QComboBox, QFormLayout, QDialogButtonBox,
-                             QGroupBox, QScrollArea)
+                             QGroupBox, QScrollArea, QCheckBox)
 from PyQt6.QtCore import Qt, QStandardPaths
 from PyQt6.QtGui import QColor, QKeySequence, QFont
 from openpyxl import Workbook
@@ -214,14 +214,18 @@ APP_STYLESHEET = """
 
 class SettingsDialog(QDialog):
     """Finestra di dialogo per gestire i preset di configurazione"""
-    def __init__(self, presets, current_preset, parent=None):
+    def __init__(self, presets, current_preset, default_preset, parent=None):
         super().__init__(parent)
         self.presets = presets
         self.current_preset = current_preset
+        self.default_preset = default_preset  # *** NUOVO ***
         self.result = None
         
         self.setWindowTitle("⚙️ Impostazioni Comparatore")
-        self.resize(350, 700)  
+        self.setFixedWidth(750)  # FORZA larghezza fissa a 750px
+        self.resize(450, 760)
+       
+        
         
         self.init_ui()
         
@@ -267,22 +271,37 @@ class SettingsDialog(QDialog):
         self.label_preset_details.setWordWrap(True)
         self.update_preset_details()
         
-        btn_select_preset = QPushButton("✓ Usa Questo Preset")
+        btn_select_preset = QPushButton("✔ Usa Preset")
         btn_select_preset.clicked.connect(self.select_existing_preset)
+        
+        # *** NUOVO: Pulsante per impostare come predefinito ***
+        btn_set_default = QPushButton("⭐ Predefinito")
+        btn_set_default.clicked.connect(self.set_as_default)
+        btn_set_default.setStyleSheet("""
+            QPushButton {
+                background-color: #f39c12;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #e67e22;
+            }
+        """)
+        
+        # Layout orizzontale per affiancare i pulsanti
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(10)  # Ridotto per finestra stretta
+        buttons_layout.addWidget(btn_select_preset)
+        buttons_layout.addWidget(btn_set_default)
         
         group_select_layout.addWidget(QLabel("Preset disponibili:"))
         group_select_layout.addWidget(self.combo_presets)
         group_select_layout.addWidget(self.label_preset_details)
-        group_select_layout.addWidget(btn_select_preset)
+        group_select_layout.addLayout(buttons_layout)  # *** MODIFICATO: usa addLayout invece di addWidget ***
         group_select.setLayout(group_select_layout)
         
         layout.addWidget(group_select)
         
-        # --- SEPARATORE ---
-        separator = QLabel("━" * 80)
-        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        separator.setStyleSheet("color: #bdc3c7;")
-        layout.addWidget(separator)
+        
         
         # --- SEZIONE: CREA NUOVO PRESET ---
         group_create = QGroupBox("➕ Crea Nuovo Preset")
@@ -349,7 +368,12 @@ class SettingsDialog(QDialog):
             self.column_inputs.append(line_edit)
             group_create_layout.addRow(label_text, line_edit)
         
-        btn_create_preset = QPushButton("✓ Crea e Usa Nuovo Preset")
+        # *** NUOVO: Checkbox per impostare subito come predefinito ***
+        self.checkbox_set_as_default = QCheckBox("⭐ Imposta come predefinito")
+        self.checkbox_set_as_default.setStyleSheet("color: #f39c12; font-weight: bold;")
+        group_create_layout.addRow("", self.checkbox_set_as_default)
+        
+        btn_create_preset = QPushButton("✔ Crea e Usa Nuovo Preset")
         btn_create_preset.clicked.connect(self.create_new_preset)
         
         group_create.setLayout(group_create_layout)
@@ -406,7 +430,13 @@ class SettingsDialog(QDialog):
         preset_data = self.presets[preset_name]
         
         columns_str = ", ".join(preset_data["columns"])
-        details = f"<b>Colonna Chiave:</b> {preset_data['key_column']}<br>"
+        
+        # *** NUOVO: Mostra stella se è il predefinito ***
+        is_default = (preset_name == self.default_preset)
+        default_badge = " <span style='color: #f39c12; font-size: 16px;'>⭐ PREDEFINITO</span>" if is_default else ""
+        
+        details = f"<b>Preset:</b> {preset_name}{default_badge}<br>"
+        details += f"<b>Colonna Chiave:</b> {preset_data['key_column']}<br>"
         details += f"<b>Colonne:</b> {columns_str}"
         
         self.label_preset_details.setText(details)
@@ -418,6 +448,27 @@ class SettingsDialog(QDialog):
             'preset_name': self.combo_presets.currentText()
         }
         self.accept()
+        
+        
+    def set_as_default(self):
+        """Imposta il preset selezionato come predefinito"""
+        preset_name = self.combo_presets.currentText()
+        
+        reply = QMessageBox.question(
+            self,
+            "⭐ Imposta Preset Predefinito",
+            f"Vuoi impostare '{preset_name}' come preset predefinito?\n\n"
+            "Questo preset verrà caricato automaticamente all'avvio dell'applicazione.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.result = {
+                'action': 'set_default',
+                'preset_name': preset_name
+            }
+            self.accept()
+    
     
     def create_new_preset(self):
         """Crea un nuovo preset personalizzato"""
@@ -474,7 +525,8 @@ class SettingsDialog(QDialog):
             'action': 'create',
             'preset_name': preset_name,
             'key_column': key_column,
-            'columns': columns
+            'columns': columns,
+            'set_as_default': self.checkbox_set_as_default.isChecked()  # *** NUOVO ***
         }
         self.accept()
     
@@ -628,24 +680,28 @@ class CodeComparator(QMainWindow):
         QApplication.setStyle('Fusion')
         
         self.setWindowTitle("Code Comparator - Confronto Liste")
-        self.resize(1400, 900)
+        self.resize(1200, 900)
 
         # ============================================================
         # CONFIGURAZIONE PRESET
         # ============================================================
         self.presets = {
-            "PREDEFINITO (ISBN, Titolo, Autore Editore, Anno, Prezzo, Note)": {
+            "ACQUISTI (ISBN, Titolo, Autore, Editore, Anno, Prezzo, Note)": {
                 "key_column": "ISBN",
                 "columns": ["ISBN", "TITOLO", "AUTORE", "EDITORE", "ANNO", "PREZZO", "NOTE"]
             },
-            "STAMPA REGISTRI (Inventario, Sezione, Collocazione, Specificazione, Sequenza, Descrizione ISBD, Legami)": {
+            "ACQUISTI 2 (ISBN, Titolo)": {
+                "key_column": "ISBN",
+                "columns": ["ISBN", "TITOLO"]
+            },
+            "STAMPA REGISTRI 1 (Inventario, Sezione, Collocazione, Specificazione, Sequenza, Descrizione ISBD, Legami)": {
                 "key_column": "Inventario",
                 "columns": ["Inventario", "Sezione", "Collocazione", "Specificazione", 
                            "Sequenza", "Descrizione ISBD", "Legami"]
             },
-            "ISBN + TITOLO (ISBN, Titolo)": {
-                "key_column": "ISBN",
-                "columns": ["ISBN", "TITOLO"]
+            "STAMPA REGISTRI 2 (Inventario, Descrizione ISBD)": {
+                "key_column": "Inventario",
+                "columns": ["Inventario", "Descrizione ISBD"]
             }
         }
         
@@ -657,10 +713,18 @@ class CodeComparator(QMainWindow):
             base_dir = Path.cwd()
         self.config_file = str(base_dir / "presets.json")
         
+        # --- Variabile per preset predefinito ---
+        self.default_preset = None
+        
         # --- Carica preset salvati ---
         self.load_presets()
         
-        self.current_preset = "PREDEFINITO (ISBN, Titolo, Autore Editore, Anno, Prezzo, Note)"
+        # --- Usa il preset predefinito se esiste, altrimenti usa ACQUISTI ---
+        if self.default_preset and self.default_preset in self.presets:
+            self.current_preset = self.default_preset
+        else:
+            self.current_preset = "ACQUISTI (ISBN, Titolo, Autore, Editore, Anno, Prezzo, Note)"
+        
         self.key_column = self.presets[self.current_preset]["key_column"]
         self.columns = self.presets[self.current_preset]["columns"].copy()
         
@@ -709,7 +773,7 @@ class CodeComparator(QMainWindow):
     
     def save_presets(self):
         """
-        Salva i preset attuali in presets.json nella cartella dello script.
+        Salva i preset attuali e il preset predefinito in presets.json nella cartella dello script.
         Crea un backup prima di sovrascrivere.
         """
         try:
@@ -719,13 +783,19 @@ class CodeComparator(QMainWindow):
                 try:
                     shutil.copy2(self.config_file, backup_file)
                 except Exception as e:
-                    logging.warning(f"Impossibile creare backup: {e}")  # warning invece di error
+                    logging.warning(f"Impossibile creare backup: {e}")
+            
+            # Prepara i dati da salvare con preset predefinito
+            data_to_save = {
+                "default_preset": self.default_preset,
+                "presets": self.presets
+            }
             
             # Salva i preset
             with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(self.presets, f, indent=4, ensure_ascii=False)
+                json.dump(data_to_save, f, indent=4, ensure_ascii=False)
             
-            logging.info(f"Preset salvati in: {self.config_file}")  # ✅
+            logging.info(f"Preset salvati in: {self.config_file}")  
             
         except PermissionError:
             QMessageBox.warning(
@@ -745,7 +815,7 @@ class CodeComparator(QMainWindow):
 
     def load_presets(self):
         """
-        Carica i preset da presets.json se esiste.
+        Carica i preset e il preset predefinito da presets.json se esiste.
         Valida i dati caricati per evitare corruzione.
         """
         if not os.path.exists(self.config_file):
@@ -754,7 +824,21 @@ class CodeComparator(QMainWindow):
         
         try:
             with open(self.config_file, "r", encoding="utf-8") as f:
-                loaded_presets = json.load(f)
+                loaded_data = json.load(f)
+            
+            # Gestisci retrocompatibilità con vecchio formato (solo preset senza struttura)
+            if isinstance(loaded_data, dict):
+                # Nuovo formato con "default_preset" e "presets"
+                if "presets" in loaded_data:
+                    loaded_presets = loaded_data.get("presets", {})
+                    self.default_preset = loaded_data.get("default_preset", None)
+                # Vecchio formato (solo preset diretti)
+                else:
+                    loaded_presets = loaded_data
+                    self.default_preset = None
+            else:
+                loaded_presets = {}
+                self.default_preset = None
             
             # Validazione: ogni preset deve avere "key_column" e "columns"
             valid_presets = {}
@@ -762,16 +846,28 @@ class CodeComparator(QMainWindow):
                 if self._validate_preset(preset_name, preset_data):
                     valid_presets[preset_name] = preset_data
                 else:
-                    logging.warning(f"Preset '{preset_name}' non valido, ignorato.")  # ✅ (usa warning per problemi)
+                    logging.warning(f"Preset '{preset_name}' non valido, ignorato.")
             
             # Unisci con i preset predefiniti (i custom sovrascrivono i default se hanno lo stesso nome)
             self.presets.update(valid_presets)
             
-            logging.info(f"Caricati {len(valid_presets)} preset da: {self.config_file}") 
+            # Verifica che il preset predefinito esista ancora
+            if self.default_preset and self.default_preset not in self.presets:
+                logging.warning(f"Preset predefinito '{self.default_preset}' non trovato. Resettato.")
+                self.default_preset = None
+            
+            logging.info(f"Caricati {len(valid_presets)} preset da: {self.config_file}")
+            
+            
             
         except json.JSONDecodeError as e:
-            QMessageBox.warning(...)
-            logging.error(f"Errore parsing JSON: {e}")  # ✅ CORRETTO
+            QMessageBox.warning(
+                self,
+                "⚠️ File Corrotto",
+                f"Il file presets.json è corrotto:\n{str(e)}\n\n"
+                "Tentativo di ripristino dal backup..."
+            )
+            logging.error(f"Errore parsing JSON: {e}")
             self._restore_backup()
             
         except Exception as e:
@@ -861,7 +957,7 @@ class CodeComparator(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(10)
+        main_layout.setSpacing(15)
         main_layout.setContentsMargins(15, 10, 15, 15)
 
         # --- HEADER: TITOLO E IMPOSTAZIONI ---
@@ -1113,7 +1209,7 @@ class CodeComparator(QMainWindow):
             Questa operazione resetta anche lo storico delle eliminazioni.
         """
         store = self.lists[list_id]
-        store["df"] = pd.DataFrame(columns=self.columns + ['__ORIGINAL_ROW__'])
+        store["df"] = pd.DataFrame(columns=self.columns)  # ✅ Rimossa __ORIGINAL_ROW__ (viene aggiunta al paste)
         store["table"].setRowCount(0)
         store["deleted"].clear()
         store["btn_restore"].setEnabled(False)
@@ -1149,10 +1245,15 @@ class CodeComparator(QMainWindow):
         deleted_rows_data = []
         
         for row_idx in selected_rows_ui:
-            # ✅ OTTIMIZZATO: Usa sempre la prima colonna per UserRole (più affidabile)
-            item = table.item(row_idx, 0)
+            # ✅ CORRETTO: Cerca il primo item disponibile in qualsiasi colonna
+            item = None
+            for col in range(table.columnCount()):
+                item = table.item(row_idx, col)
+                if item:
+                    break
+            
             if not item:
-                logging.warning(f"Riga {row_idx}: nessun item trovato nella prima colonna")
+                logging.warning(f"Riga {row_idx}: nessun item trovato in alcuna colonna")
                 continue
             
             real_index = item.data(Qt.ItemDataRole.UserRole)
@@ -1801,13 +1902,14 @@ class CodeComparator(QMainWindow):
             for i, row in enumerate(display_df.itertuples(index=True)):
                 real_index = row.Index  # ✅ Usa l'indice esplicito del DataFrame
                 for j, col_name in enumerate(display_columns):
+                    # ✅ Accesso per indice (già protetto contro IndexError)
                     value = row[j + 1] if j + 1 < len(row) else ""
                     
                     item = table_widget.item(i, j)
                     val_str = str(value) if not pd.isna(value) else ""
                     item.setText(val_str)
                     item.setToolTip(val_str if len(val_str) > 30 else "")
-                    item.setData(Qt.ItemDataRole.UserRole, real_index)  # ✅ CORRETTO
+                    item.setData(Qt.ItemDataRole.UserRole, real_index)
                     
                     if highlight_from is not None and i >= highlight_from:
                         item.setBackground(color_highlight)
@@ -2086,10 +2188,12 @@ class CodeComparator(QMainWindow):
         Returns:
             int: Larghezza in unità Excel (default 20)
         """
-        col_name_upper = column_name.upper()
+        # ✅ Gestisce None e valori non-stringa
+        col_name_upper = str(column_name).upper().strip()
         
         for target_width, keywords in EXCEL_COLUMN_WIDTHS.items():
-            if any(kw in col_name_upper for kw in keywords):
+            # ✅ Ricerca bidirezionale: keyword nella colonna O colonna nella keyword
+            if any(kw in col_name_upper or col_name_upper in kw for kw in keywords):
                 return target_width
         
         return 20  # Default
@@ -2197,7 +2301,7 @@ class CodeComparator(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         
-        dialog = SettingsDialog(self.presets, self.current_preset, self)
+        dialog = SettingsDialog(self.presets, self.current_preset, self.default_preset, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             result = dialog.get_result()
             
@@ -2217,8 +2321,25 @@ class CodeComparator(QMainWindow):
                 self.current_preset = preset_name
                 self.key_column = result['key_column']
                 self.columns = result['columns']
+                
+                # *** NUOVO: Imposta come predefinito se richiesto ***
+                if result.get('set_as_default', False):
+                    self.default_preset = preset_name
+                
                 # --- SALVA AUTOMATICAMENTE SU DISCO ---
                 self.save_presets()
+            
+            # *** NUOVO: Gestisci azione "set_default" ***
+            elif result['action'] == 'set_default':
+                self.default_preset = result['preset_name']
+                self.save_presets()
+                QMessageBox.information(
+                    self,
+                    "✔ Preset Predefinito Impostato",
+                    f"Il preset '{result['preset_name']}' è ora il predefinito.\n\n"
+                    "Verrà caricato automaticamente all'avvio dell'applicazione."
+                )
+                return  # *** Non resettare i dati, solo salva il predefinito ***
             
             # Aggiorna solo le colonne del TableManager esistente
             self.table_manager.columns = self.columns
