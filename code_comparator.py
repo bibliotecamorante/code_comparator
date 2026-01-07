@@ -216,11 +216,12 @@ APP_STYLESHEET = """
 
 class SettingsDialog(QDialog):
     """Finestra di dialogo per gestire i preset di configurazione"""
-    def __init__(self, presets, current_preset, default_preset, parent=None):
+    def __init__(self, presets, current_preset, default_preset, protected_presets, parent=None):
         super().__init__(parent)
         self.presets = presets
         self.current_preset = current_preset
-        self.default_preset = default_preset  # *** NUOVO ***
+        self.default_preset = default_preset
+        self.protected_presets = protected_presets  # *** NUOVO ***
         self.result = None
         
         self.setWindowTitle("⚙️ Impostazioni Comparatore")
@@ -271,9 +272,9 @@ class SettingsDialog(QDialog):
         self.label_preset_details = QLabel()
         self.label_preset_details.setStyleSheet("padding: 10px; background-color: #ecf0f1; border-radius: 5px;")
         self.label_preset_details.setWordWrap(True)
-        self.update_preset_details()
+        # ✅ NON chiamare update_preset_details() qui!
         
-        btn_select_preset = QPushButton("✔ Usa Preset")
+        btn_select_preset = QPushButton("✓ Usa Preset")
         btn_select_preset.clicked.connect(self.select_existing_preset)
         
         # *** NUOVO: Pulsante per impostare come predefinito ***
@@ -289,21 +290,36 @@ class SettingsDialog(QDialog):
             }
         """)
         
+        # *** NUOVO: Pulsante per eliminare preset ***
+        self.btn_delete_preset = QPushButton("🗑️ Elimina")
+        self.btn_delete_preset.clicked.connect(self.delete_preset)
+        self.btn_delete_preset.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+        """)
+        
         # Layout orizzontale per affiancare i pulsanti
         buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(10)  # Ridotto per finestra stretta
+        buttons_layout.setSpacing(10)
         buttons_layout.addWidget(btn_select_preset)
         buttons_layout.addWidget(btn_set_default)
+        buttons_layout.addWidget(self.btn_delete_preset)
         
         group_select_layout.addWidget(QLabel("Preset disponibili:"))
         group_select_layout.addWidget(self.combo_presets)
         group_select_layout.addWidget(self.label_preset_details)
-        group_select_layout.addLayout(buttons_layout)  # *** MODIFICATO: usa addLayout invece di addWidget ***
+        group_select_layout.addLayout(buttons_layout)
         group_select.setLayout(group_select_layout)
         
         layout.addWidget(group_select)
         
-        
+        # ✅ Chiamalo DOPO che tutti i widget sono stati creati
+        self.update_preset_details()
         
         # --- SEZIONE: CREA NUOVO PRESET ---
         group_create = QGroupBox("➕ Crea Nuovo Preset")
@@ -437,11 +453,18 @@ class SettingsDialog(QDialog):
         is_default = (preset_name == self.default_preset)
         default_badge = " <span style='color: #f39c12; font-size: 16px;'>⭐ PREDEFINITO</span>" if is_default else ""
         
-        details = f"<b>Preset:</b> {preset_name}{default_badge}<br>"
+        # *** NUOVO: Mostra badge "PROTETTO" se non eliminabile ***
+        is_protected = preset_name in self.protected_presets
+        protected_badge = " <span style='color: #95a5a6; font-size: 14px;'>🔒 PROTETTO</span>" if is_protected else ""
+        
+        details = f"<b>Preset:</b> {preset_name}{default_badge}{protected_badge}<br>"
         details += f"<b>Colonna Chiave:</b> {preset_data['key_column']}<br>"
         details += f"<b>Colonne:</b> {columns_str}"
         
         self.label_preset_details.setText(details)
+        
+        # *** NUOVO: Disabilita pulsante Elimina se il preset è protetto ***
+        self.btn_delete_preset.setEnabled(not is_protected)
     
     def select_existing_preset(self):
         """Seleziona un preset esistente"""
@@ -471,6 +494,35 @@ class SettingsDialog(QDialog):
             }
             self.accept()
     
+    def delete_preset(self):
+        """Elimina il preset selezionato"""
+        preset_name = self.combo_presets.currentText()
+        
+        # Verifica che non sia un preset protetto
+        if preset_name in self.protected_presets:
+            QMessageBox.warning(
+                self,
+                "🔒 Preset Protetto",
+                f"Il preset '{preset_name}' è un preset di sistema e non può essere eliminato."
+            )
+            return
+        
+        # Chiedi conferma
+        reply = QMessageBox.question(
+            self,
+            "🗑️ Conferma Eliminazione",
+            f"Sei sicuro di voler eliminare il preset '{preset_name}'?\n\n"
+            "Questa azione non può essere annullata.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.result = {
+                'action': 'delete',
+                'preset_name': preset_name
+            }
+            self.accept()
     
     def create_new_preset(self):
         """Crea un nuovo preset personalizzato"""
@@ -677,12 +729,30 @@ class TableManager:
 class CodeComparator(QMainWindow):
     """Applicazione principale per confrontare liste basate su colonne chiave"""
     
+    # ← AGGIUNGI QUESTE RIGHE QUI ↓
+    
+    @property
+    def columns(self):
+        """Quando il codice legge self.columns, restituisci _columns"""
+        return self._columns
+    
+    @columns.setter
+    def columns(self, nuovo_valore):
+        """Quando il codice scrive self.columns = [...], fai AUTOMATICAMENTE:"""
+        self._columns = nuovo_valore  # 1. Salva il nuovo valore
+        
+        # 2. Se esiste già table_manager, aggiornalo anche lui!
+        if hasattr(self, 'table_manager'):
+            self.table_manager.columns = nuovo_valore
+    
+    
     def __init__(self):
         super().__init__()
         QApplication.setStyle('Fusion')
         
         self.setWindowTitle("Code Comparator - Confronto Liste")
         self.resize(1200, 900)
+        self.setMinimumSize(800, 600)  # ✅ AGGIUNGI QUESTA RIGA
 
         # ============================================================
         # CONFIGURAZIONE PRESET
@@ -707,6 +777,10 @@ class CodeComparator(QMainWindow):
             }
         }
         
+        # *** NUOVO: Set di preset protetti (non eliminabili) ***
+        self.protected_presets = set(self.presets.keys())
+        
+       
         # --- File di configurazione nella cartella dello script ---
         try:
             base_dir = Path(__file__).resolve().parent
@@ -728,12 +802,12 @@ class CodeComparator(QMainWindow):
             self.current_preset = "ACQUISTI (ISBN, Titolo, Autore, Editore, Anno, Prezzo, Note)"
         
         self.key_column = self.presets[self.current_preset]["key_column"]
-        self.columns = self.presets[self.current_preset]["columns"].copy()
+        self._columns = self.presets[self.current_preset]["columns"].copy()
         
         # ============================================================
         # TABLE MANAGER
         # ============================================================
-        self.table_manager = TableManager(self.columns)
+        self.table_manager = TableManager(self._columns)
         
         # ============================================================
         # CENTRALIZZAZIONE: Dizionario unico per gestire le liste
@@ -976,7 +1050,7 @@ class CodeComparator(QMainWindow):
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         btn_settings = QPushButton("⚙️ Impostazioni")
-        btn_settings.setFixedSize(140, 40)  # Aumentato da 130 a 150
+        btn_settings.setMinimumSize(140, 40)  # Permette espansione
         btn_settings.clicked.connect(self.open_settings)
         btn_settings.setObjectName("btn_settings")
         
@@ -1120,10 +1194,11 @@ class CodeComparator(QMainWindow):
         layout.addWidget(container)
         
         # Salva riferimenti nel dizionario centralizzato
-        self.lists[list_id]["table"] = table
-        self.lists[list_id]["label"] = count_label
-        self.lists[list_id]["duplicates_label"] = duplicates_label  # *** NUOVO ***
-        self.lists[list_id]["btn_restore"] = btn_restore
+        store = self.lists[list_id]
+        store["table"] = table
+        store["label"] = count_label
+        store["duplicates_label"] = duplicates_label
+        store["btn_restore"] = btn_restore
 
         return table
 
@@ -1141,38 +1216,35 @@ class CodeComparator(QMainWindow):
     # METODI UNIFICATI PER GESTIONE LISTE
     # ============================================================
     
-    def _update_counters(self, list_id, force: bool = False):
-        """
-        Aggiorna contatori righe e duplicati per una lista.
-        
-        Args:
-            list_id: Identificativo della lista (1 o 2)
-            force: Se True, aggiorna sempre anche se il conteggio non è cambiato
-        """
+    def _update_counters(self, list_id):
+        """Aggiorna contatori righe e duplicati per una lista"""
         store = self.lists[list_id]
         df = store["df"]
         
-        # ✅ OTTIMIZZAZIONE: Salta se il DataFrame è vuoto e non forzato
-        if df.empty and not force:
-            store["label"].setText("(0 righe)")
+        # Aggiorna sempre il contatore righe
+        store["label"].setText(f"({len(df)} righe)")
+        
+        # Salta il calcolo duplicati se vuoto
+        if df.empty:
             store["duplicates_label"].setText("")
             return
         
-        # Filtra righe con chiave vuota o None prima di contare duplicati
+        # Filtra righe con chiave valida
         df_with_keys = self._get_df_with_valid_keys(df)
         
-        if len(df_with_keys) == 0:
+        if df_with_keys.empty:
             store["duplicates_label"].setText("")
             return
         
         duplicates_unique, duplicates_count = ComparisonEngine.count_duplicates(df_with_keys)
-
-        if duplicates_count == 0:
+        
+        # Aggiorna label duplicati
+        if duplicates_count > 0:
+            store["duplicates_label"].setText(
+                f"⚠️ {duplicates_unique} duplicati ({duplicates_count} righe)"
+            )
+        else:
             store["duplicates_label"].setText("")
-            return
-        store["duplicates_label"].setText(
-            f"⚠️ {duplicates_unique} duplicati ({duplicates_count} righe)"
-        )
     
 
     def paste_data(self, list_id: int) -> None:
@@ -1195,7 +1267,7 @@ class CodeComparator(QMainWindow):
             store["df"] = new_df
         
         self.update_table_display(store["table"], store["df"], highlight_from=old_row_count)
-        self._update_counters(list_id, force=True)  # Sempre aggiorna dopo paste
+        self._update_counters(list_id) 
         self.table_manager.reset_sorting(store["table"])
 
         new_rows = len(new_df)
@@ -1207,22 +1279,8 @@ class CodeComparator(QMainWindow):
             logging.info(f"Lista {list_id}: caricata con {len(store['df'])} righe")
 
     def clear_data(self, list_id: int) -> None:
-        """
-        Cancella tutti i dati di una lista specifica.
-        
-        Args:
-            list_id: Identificativo della lista (1 o 2)
-        
-        Note:
-            Questa operazione resetta anche lo storico delle eliminazioni.
-        """
-        store = self.lists[list_id]
-        store["df"] = pd.DataFrame(columns=self.columns)  # ✅ Rimossa __ORIGINAL_ROW__ (viene aggiunta al paste)
-        store["table"].setRowCount(0)
-        store["deleted"].clear()
-        store["btn_restore"].setEnabled(False)
-        
-        self._update_counters(list_id)
+        """Cancella tutti i dati di una lista specifica"""
+        self._reset_single_list(list_id)  # ✅ USA IL NUOVO HELPER
         self.info_label.setText(f"Lista {list_id} cancellata")
 
     def delete_rows(self, list_id: int) -> None:
@@ -2306,7 +2364,7 @@ class CodeComparator(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         
-        dialog = SettingsDialog(self.presets, self.current_preset, self.default_preset, self)
+        dialog = SettingsDialog(self.presets, self.current_preset, self.default_preset, self.protected_presets, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             result = dialog.get_result()
             
@@ -2340,15 +2398,50 @@ class CodeComparator(QMainWindow):
                 self.save_presets()
                 QMessageBox.information(
                     self,
-                    "✔ Preset Predefinito Impostato",
+                    "✓ Preset Predefinito Impostato",
                     f"Il preset '{result['preset_name']}' è ora il predefinito.\n\n"
                     "Verrà caricato automaticamente all'avvio dell'applicazione."
                 )
                 return  # *** Non resettare i dati, solo salva il predefinito ***
             
-            # Aggiorna solo le colonne del TableManager esistente
-            self.table_manager.columns = self.columns
+            # *** NUOVO: Gestisci azione "delete" ***
+            elif result['action'] == 'delete':
+                preset_name = result['preset_name']
+                
+                # Verifica che non sia protetto (doppia sicurezza)
+                if preset_name in self.protected_presets:
+                    QMessageBox.warning(
+                        self,
+                        "🔒 Preset Protetto",
+                        f"Il preset '{preset_name}' è un preset di sistema e non può essere eliminato."
+                    )
+                    return
+                
+                # Rimuovi dal dizionario
+                del self.presets[preset_name]
+                
+                # Se era il preset corrente, passa al primo disponibile
+                if self.current_preset == preset_name:
+                    self.current_preset = next(iter(self.presets.keys()))
+                    self.key_column = self.presets[self.current_preset]["key_column"]
+                    self.columns = self.presets[self.current_preset]["columns"].copy()
+                    self.reset_all_data()
+                
+                # Se era il preset predefinito, resettalo
+                if self.default_preset == preset_name:
+                    self.default_preset = None
+                
+                # Salva le modifiche
+                self.save_presets()
+                
+                QMessageBox.information(
+                    self,
+                    "✓ Preset Eliminato",
+                    f"Il preset '{preset_name}' è stato eliminato con successo."
+                )
+                return
             
+                        
             # Resetta le liste
             self.reset_all_data()
             
@@ -2357,36 +2450,44 @@ class CodeComparator(QMainWindow):
             
             self.info_label.setText(f"✓ Configurazione cambiata: {self.current_preset} (Colonna chiave: {self.key_column})")
 
+
+    def _reset_table_widget(self, table_widget):
+        """Resetta una tabella (funzione di aiuto per non ripetere codice)"""
+        table_widget.setColumnCount(len(self.columns))
+        table_widget.setHorizontalHeaderLabels(self.columns)
+        self.table_manager.reset_sorting(table_widget)
+        table_widget.setRowCount(0)
+    
+    def _reset_single_list(self, list_id: int) -> None:
+        """Reset di una singola lista (helper method)"""
+        store = self.lists[list_id]
+        store["df"] = pd.DataFrame(columns=self.columns)
+        store["deleted"].clear()
+        
+        # Reset tabella - USA LA NUOVA FUNZIONE!
+        self._reset_table_widget(store["table"])  # ← UNA RIGA INVECE DI 4!
+        
+        # Reset contatori
+        store["label"].setText("(0 righe)")
+        store["duplicates_label"].setText("")
+        
+        # Reset pulsante ripristina
+        store["btn_restore"].setEnabled(False)
+
     def reset_all_data(self):
         """Reset completo di tutti i dati quando si cambia configurazione"""
-        # Reset dataframe nelle liste
+        # Reset liste usando helper method
         for list_id in [1, 2]:
-            store = self.lists[list_id]
-            store["df"] = pd.DataFrame(columns=self.columns)
-            store["deleted"].clear()
-            
-            # Reset tabelle input
-            store["table"].setColumnCount(len(self.columns))
-            store["table"].setHorizontalHeaderLabels(self.columns)
-            self.table_manager.reset_sorting(store["table"])
-            store["table"].setRowCount(0)
-            
-            # Reset contatori
-            store["label"].setText("(0 righe)")
-            
-            # Reset pulsanti ripristina
-            store["btn_restore"].setEnabled(False)
+            self._reset_single_list(list_id)
         
-        # Reset risultati
-        self.table_manager.reset_sorting(self.res_matches)
-        self.res_matches.setRowCount(0)
-        self.table_manager.reset_sorting(self.res_mismatches)
-        self.res_mismatches.setRowCount(0)
+        # Reset risultati - USA LA NUOVA FUNZIONE!
+        for table in [self.res_matches, self.res_mismatches]:
+            self._reset_table_widget(table)  # ← UNA RIGA INVECE DI 2!
         
         # Reset tab
-        self.tabs_results.setTabText(0, "✓ Corrispondenze (0)")
+        self.tabs_results.setTabText(0, "✅ Corrispondenze (0)")
         self.tabs_results.setTabText(1, "✗ Mancanti (0)")
-        
+            
         # Disabilita pulsanti export
         self.btn_export_matches.setEnabled(False)
         self.btn_export_mismatches.setEnabled(False)
