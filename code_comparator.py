@@ -14,7 +14,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QHeaderView, QTabWidget,
                              QMessageBox, QFileDialog, QMenu, QDialog, 
                              QLineEdit, QComboBox, QFormLayout, QDialogButtonBox,
-                             QGroupBox, QScrollArea, QCheckBox)
+                             QGroupBox, QScrollArea, QCheckBox, 
+                             QListWidget, QListWidgetItem, QRadioButton, QButtonGroup)
+                             # ✅ AGGIUNTI: QListWidget, QListWidgetItem, QRadioButton, QButtonGroup
 from PyQt6.QtCore import Qt, QStandardPaths
 from PyQt6.QtGui import QColor, QKeySequence, QFont
 from openpyxl import Workbook
@@ -215,379 +217,954 @@ APP_STYLESHEET = """
 
 
 class SettingsDialog(QDialog):
-    """Finestra di dialogo per gestire i preset di configurazione"""
+    """
+    Interfaccia Master-Detail con Radio Button per colonna chiave.
+    Versione DEFINITIVA con bugfix critici.
+    """
     def __init__(self, presets, current_preset, default_preset, protected_presets, parent=None):
         super().__init__(parent)
-        self.presets = presets
-        self.current_preset = current_preset
+        self.presets = presets.copy()
+        self.current_selected_name = current_preset
         self.default_preset = default_preset
-        self.protected_presets = protected_presets  # *** NUOVO ***
+        self.protected_presets = protected_presets
         self.result = None
+        self.is_new_preset_mode = False
         
-        self.setWindowTitle("⚙️ Impostazioni Comparatore")
-        self.setFixedWidth(750)  # FORZA larghezza fissa a 750px
-        self.resize(450, 760)
-       
-        
+        self.setWindowTitle("⚙️ Gestione Preset di Configurazione")
+        self.resize(950, 650)
+        self.setMinimumSize(900, 600)
         
         self.init_ui()
-        
+        self.load_preset_list()
+        self.select_preset_in_list(current_preset)
+
     @staticmethod
     def validate_preset_data(preset_name, key_column, columns):
-        """
-        Validazione unificata per i dati del preset.
-        Returns: (is_valid, error_message)
-        """
-        if not preset_name or not preset_name.strip():
+        """Validazione unificata"""
+        if not preset_name: 
             return False, "Il nome del preset è obbligatorio"
-        
-        if not key_column or not key_column.strip():
-            return False, "Il nome della colonna chiave è obbligatorio"
-        
-        if not isinstance(columns, list) or len(columns) < 1:
-            return False, "Deve esserci almeno una colonna"
-        
-        if len(columns) > MAX_COLUMNS:
+        if not key_column: 
+            return False, "Seleziona una colonna come chiave (clicca sul radio button)"
+        if len(columns) < 1: 
+            return False, "Definisci almeno una colonna"
+        if len(columns) > MAX_COLUMNS: 
             return False, f"Massimo {MAX_COLUMNS} colonne consentite"
-        
-        if key_column not in columns:
-            return False, f"La colonna chiave '{key_column}' deve essere presente nelle colonne"
-        
+        if key_column not in columns: 
+            return False, f"La colonna chiave '{key_column}' deve essere presente nell'elenco"
         return True, ""
-    
+
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        
-        # --- SEZIONE: SELEZIONA PRESET ---
-        group_select = QGroupBox("📋 Seleziona Preset Esistente")
-        group_select_layout = QVBoxLayout()
-        
-        self.combo_presets = QComboBox()
-        self.combo_presets.addItems(self.presets.keys())
-        self.combo_presets.setCurrentText(self.current_preset)
-        self.combo_presets.currentTextChanged.connect(self.on_preset_changed)
-        
-        # Label per mostrare dettagli preset
-        self.label_preset_details = QLabel()
-        self.label_preset_details.setStyleSheet("padding: 10px; background-color: #ecf0f1; border-radius: 5px;")
-        self.label_preset_details.setWordWrap(True)
-        # ✅ NON chiamare update_preset_details() qui!
-        
-        btn_select_preset = QPushButton("✓ Usa Preset")
-        btn_select_preset.clicked.connect(self.select_existing_preset)
-        
-        # *** NUOVO: Pulsante per impostare come predefinito ***
-        btn_set_default = QPushButton("⭐ Predefinito")
-        btn_set_default.clicked.connect(self.set_as_default)
-        btn_set_default.setStyleSheet("""
-            QPushButton {
-                background-color: #f39c12;
-                color: white;
-            }
-            QPushButton:hover {
-                background-color: #e67e22;
+        main_layout = QHBoxLayout(self)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # ==========================================
+        # LATO SINISTRO: LISTA
+        # ==========================================
+        left_widget = QWidget()
+        left_widget.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa; 
+                border-right: 2px solid #dee2e6;
             }
         """)
+        left_widget.setMinimumWidth(280)
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(15, 15, 15, 15)
+        left_layout.setSpacing(10)
         
-        # *** NUOVO: Pulsante per eliminare preset ***
-        self.btn_delete_preset = QPushButton("🗑️ Elimina")
-        self.btn_delete_preset.clicked.connect(self.delete_preset)
-        self.btn_delete_preset.setStyleSheet("""
+        title_list = QLabel("📋 I TUOI PRESET")
+        title_list.setStyleSheet("""
+            font-weight: bold; 
+            font-size: 13px;
+            color: #2c3e50; 
+            padding: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        """)
+        left_layout.addWidget(title_list)
+
+        self.label_preset_count = QLabel()
+        self.label_preset_count.setStyleSheet("color: #6c757d; font-size: 11px; padding: 2px 8px;")
+        left_layout.addWidget(self.label_preset_count)
+
+        from PyQt6.QtWidgets import QListWidget
+        self.list_presets = QListWidget()
+        self.list_presets.setStyleSheet("""
+            QListWidget {
+                border: 2px solid #ced4da;
+                border-radius: 5px;
+                background-color: white;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                padding: 14px 10px;
+                border-bottom: 1px solid #f1f3f5;
+            }
+            QListWidget::item:hover {
+                background-color: #f8f9fa;
+            }
+            QListWidget::item:selected {
+                background-color: #e7f1ff;
+                color: #084298;
+                font-weight: bold;
+                border-left: 4px solid #0d6efd;
+            }
+        """)
+        self.list_presets.currentItemChanged.connect(self.on_selection_changed)
+        left_layout.addWidget(self.list_presets)
+
+        self.label_selection_info = QLabel()
+        self.label_selection_info.setStyleSheet("""
+            color: #6c757d; 
+            font-size: 10px; 
+            padding: 5px 8px;
+            background-color: #f8f9fa;
+            border-radius: 3px;
+        """)
+        self.label_selection_info.setWordWrap(True)
+        left_layout.addWidget(self.label_selection_info)
+
+        # Pulsanti di gestione (su 2 righe per spazio)
+        left_buttons_top = QHBoxLayout()
+        left_buttons_top.setSpacing(8)
+        
+        self.btn_add_new = QPushButton("➕ Nuovo")
+        self.btn_add_new.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+        """)
+        self.btn_add_new.clicked.connect(self.prepare_new_preset)
+        
+        self.btn_delete = QPushButton("🗑️ Elimina")
+        self.btn_delete.setStyleSheet("""
             QPushButton {
                 background-color: #e74c3c;
                 color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
             }
             QPushButton:hover {
                 background-color: #c0392b;
             }
+            QPushButton:disabled {
+                background-color: #95a5a6;
+            }
+        """)
+        self.btn_delete.clicked.connect(self.delete_selected_preset)
+        
+        left_buttons_top.addWidget(self.btn_add_new)
+        left_buttons_top.addWidget(self.btn_delete)
+        left_layout.addLayout(left_buttons_top)
+        
+        # Seconda riga: pulsanti di ordinamento
+        left_buttons_bottom = QHBoxLayout()
+        left_buttons_bottom.setSpacing(8)
+        
+        self.btn_move_up = QPushButton("⬆️ Sposta Su")
+        self.btn_move_up.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:disabled {
+                background-color: #95a5a6;
+            }
+        """)
+        self.btn_move_up.clicked.connect(self.move_preset_up)
+        self.btn_move_up.setEnabled(False)
+        
+        self.btn_move_down = QPushButton("⬇️ Sposta Giù")
+        self.btn_move_down.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:disabled {
+                background-color: #95a5a6;
+            }
+        """)
+        self.btn_move_down.clicked.connect(self.move_preset_down)
+        self.btn_move_down.setEnabled(False)
+        
+        left_buttons_bottom.addWidget(self.btn_move_up)
+        left_buttons_bottom.addWidget(self.btn_move_down)
+        left_layout.addLayout(left_buttons_bottom)
+        
+        main_layout.addWidget(left_widget)
+
+        # ==========================================
+        # LATO DESTRO: EDITOR
+        # ==========================================
+        right_widget = QWidget()
+        right_widget.setStyleSheet("background-color: white;")
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(25, 20, 25, 20)
+        right_layout.setSpacing(15)
+
+        self.editor_header = QLabel("✏️ Modifica Configurazione")
+        self.editor_header.setStyleSheet("""
+            font-size: 16px;
+            font-weight: bold;
+            color: #2c3e50;
+            padding: 10px;
+            border-bottom: 2px solid #3498db;
+        """)
+        right_layout.addWidget(self.editor_header)
+
+        self.label_error = QLabel()
+        self.label_error.setStyleSheet("""
+            color: #dc3545; 
+            background-color: #f8d7da;
+            border: 1px solid #f5c2c7;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 11px;
+        """)
+        self.label_error.setWordWrap(True)
+        self.label_error.hide()
+        right_layout.addWidget(self.label_error)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: white; }")
+        
+        form_container = QWidget()
+        form_layout = QFormLayout(form_container)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form_layout.setSpacing(15)
+        form_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Nome Preset
+        name_label = QLabel("Nome Preset:")
+        name_label.setStyleSheet("font-weight: bold; color: #495057;")
+        
+        self.input_name = QLineEdit()
+        self.input_name.setPlaceholderText("Nome identificativo del preset")
+        self.input_name.setStyleSheet("""
+            QLineEdit {
+                padding: 10px;
+                border: 2px solid #ced4da;
+                border-radius: 5px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #3498db;
+            }
+            QLineEdit:disabled {
+                background-color: #e9ecef;
+            }
+        """)
+        self.input_name.textChanged.connect(self.clear_error)
+        self.input_name.setToolTip("Nome che identifica questo preset (es: 'Acquisti 2025', 'Stampa Registri')")
+        
+        form_layout.addRow(name_label, self.input_name)
+
+        # Separatore
+        separator = QLabel()
+        separator.setStyleSheet("""
+            background-color: #dee2e6; 
+            min-height: 2px; 
+            max-height: 2px;
+            margin: 10px 0px;
+        """)
+        form_layout.addRow(separator)
+
+        # Intestazione colonne
+        columns_header_widget = QWidget()
+        columns_header_layout = QVBoxLayout(columns_header_widget)
+        columns_header_layout.setSpacing(5)
+        columns_header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        columns_title = QLabel("📊 Definizione Colonne")
+        columns_title.setStyleSheet("""
+            font-weight: bold; 
+            font-size: 13px;
+            color: #2c3e50;
         """)
         
-        # Layout orizzontale per affiancare i pulsanti
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(10)
-        buttons_layout.addWidget(btn_select_preset)
-        buttons_layout.addWidget(btn_set_default)
-        buttons_layout.addWidget(self.btn_delete_preset)
+        columns_instructions = QLabel(
+            "🔑 <b>Seleziona la colonna chiave</b> cliccando sul radio button.<br>"
+            "Il radio button si attiva automaticamente quando compili il campo.<br>"
+            "La colonna chiave è quella usata per confrontare le liste (es: ISBN, Codice Inventario)"
+        )
+        columns_instructions.setStyleSheet("""
+            color: #6c757d; 
+            font-size: 11px;
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 4px;
+            padding: 8px;
+        """)
+        columns_instructions.setWordWrap(True)
         
-        group_select_layout.addWidget(QLabel("Preset disponibili:"))
-        group_select_layout.addWidget(self.combo_presets)
-        group_select_layout.addWidget(self.label_preset_details)
-        group_select_layout.addLayout(buttons_layout)
-        group_select.setLayout(group_select_layout)
-        
-        layout.addWidget(group_select)
-        
-        # ✅ Chiamalo DOPO che tutti i widget sono stati creati
-        self.update_preset_details()
-        
-        # --- SEZIONE: CREA NUOVO PRESET ---
-        group_create = QGroupBox("➕ Crea Nuovo Preset")
-        group_create_layout = QFormLayout()
+        columns_header_layout.addWidget(columns_title)
+        columns_header_layout.addWidget(columns_instructions)
+        form_layout.addRow(columns_header_widget)
 
-        self.input_preset_name = QLineEdit()
-        self.input_preset_name.setPlaceholderText("Es: Stampa Registri, Gestione Inventari")
+        # ===== ✨ COLONNE CON RADIO BUTTON + BUGFIX =====
+        from PyQt6.QtWidgets import QRadioButton, QButtonGroup
+        
+        self.key_group = QButtonGroup(self)
+        self.key_group.setExclusive(True)
+        self.column_rows = []
 
-        # 7 campi per le colonne (il primo è la colonna chiave)
-        # Campo Nome Preset
-        preset_label = QLabel("Nome Preset*:")
-        preset_label.setStyleSheet("font-weight: bold;")
-        group_create_layout.addRow(preset_label, self.input_preset_name)
-        
-        # Campi per la colonna chiave (affiancati con uguale larghezza)
-        key_widget = QWidget()
-        key_layout = QHBoxLayout(key_widget)
-        key_layout.setContentsMargins(0, 0, 0, 0)
-        key_layout.setSpacing(10)
-        
-        # Layout verticale per Nome colonna chiave
-        name_layout = QVBoxLayout()
-        name_layout.setSpacing(5)
-        name_label = QLabel("Nome colonna chiave*:")
-        name_label.setStyleSheet("font-weight: bold;")
-        self.input_key_name = QLineEdit()
-        self.input_key_name.setPlaceholderText("Es: ISBN, Inventario...")
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(self.input_key_name)
-        
-        # Layout verticale per Numero colonna chiave
-        number_layout = QVBoxLayout()
-        number_layout.setSpacing(5)
-        number_label = QLabel("Numero colonna chiave*:")
-        number_label.setStyleSheet("font-weight: bold;")
-        self.input_key_number = QLineEdit()
-        self.input_key_number.setPlaceholderText(f"Da 1 a {MAX_COLUMNS}")
-        number_layout.addWidget(number_label)
-        number_layout.addWidget(self.input_key_number)
-        
-        # Aggiungi i due layout affiancati con uguale larghezza
-        key_layout.addLayout(name_layout, 1)
-        key_layout.addLayout(number_layout, 1)
-        
-        # Connetti i campi chiave per auto-valorizzazione
-        self.input_key_name.textChanged.connect(self.update_key_column)
-        self.input_key_number.textChanged.connect(self.update_key_column)
-        
-        group_create_layout.addRow("", key_widget)
-        
-        # Separatore visivo
-        separator_key = QLabel("─" * 60)
-        separator_key.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        separator_key.setStyleSheet("color: #bdc3c7;")
-        group_create_layout.addRow("", separator_key)
-        
-        # 7 campi per le colonne (tutte opzionali)
-        self.column_inputs = []
         for i in range(MAX_COLUMNS):
-            line_edit = QLineEdit()
-            line_edit.setPlaceholderText("Opzionale")
-            label_text = f"Colonna {i+1}:"
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+
+            # 🐛 FIX 1: Radio button DISABILITATO di default
+            radio = QRadioButton()
+            radio.setEnabled(False)  # ✅ Disabilitato finché il campo è vuoto
+            radio.setStyleSheet("""
+                QRadioButton::indicator {
+                    width: 20px;
+                    height: 20px;
+                }
+                QRadioButton::indicator:checked {
+                    background-color: #e74c3c;
+                    border: 2px solid #c0392b;
+                    border-radius: 10px;
+                }
+                QRadioButton::indicator:disabled {
+                    background-color: #e9ecef;
+                    border: 2px solid #ced4da;
+                }
+            """)
+            radio.setToolTip("Seleziona questa colonna come chiave")
+            self.key_group.addButton(radio, i)
+
+            # Campo testo
+            edit = QLineEdit()
+            edit.setPlaceholderText(f"Colonna {i+1} (Opzionale)")
+            edit.setStyleSheet("""
+                QLineEdit {
+                    padding: 10px;
+                    border: 2px solid #ced4da;
+                    border-radius: 4px;
+                    font-size: 12px;
+                }
+                QLineEdit:focus {
+                    border: 2px solid #3498db;
+                }
+            """)
+            edit.textChanged.connect(self.clear_error)
             
-            self.column_inputs.append(line_edit)
-            group_create_layout.addRow(label_text, line_edit)
+            # 🐛 FIX 1: Abilita/disabilita radio in base al contenuto
+            edit.textChanged.connect(
+                lambda text, r=radio: r.setEnabled(bool(text.strip()))
+            )
+
+            # Effetto visivo quando selezionato
+            def make_highlight_callback(edit_widget, radio_widget):
+                def on_toggle(checked):
+                    if checked:
+                        edit_widget.setStyleSheet("""
+                            QLineEdit {
+                                padding: 10px;
+                                border: 3px solid #e74c3c;
+                                border-radius: 4px;
+                                font-size: 12px;
+                                background-color: #fff3cd;
+                                font-weight: bold;
+                            }
+                            QLineEdit:focus {
+                                border: 3px solid #c0392b;
+                            }
+                        """)
+                    else:
+                        edit_widget.setStyleSheet("""
+                            QLineEdit {
+                                padding: 10px;
+                                border: 2px solid #ced4da;
+                                border-radius: 4px;
+                                font-size: 12px;
+                            }
+                            QLineEdit:focus {
+                                border: 2px solid #3498db;
+                            }
+                        """)
+                return on_toggle
+            
+            radio.toggled.connect(make_highlight_callback(edit, radio))
+
+            row_layout.addWidget(radio)
+            row_layout.addWidget(edit)
+
+            self.column_rows.append((radio, edit))
+            
+            label = QLabel(f"Colonna {i+1}:")
+            label.setStyleSheet("color: #6c757d; font-size: 12px;")
+            form_layout.addRow(label, row_widget)
+
+        scroll.setWidget(form_container)
+        right_layout.addWidget(scroll)
+
+        # Azioni Editor
+        editor_actions = QHBoxLayout()
+        editor_actions.setSpacing(10)
         
-        # *** NUOVO: Checkbox per impostare subito come predefinito ***
-        self.checkbox_set_as_default = QCheckBox("⭐ Imposta come predefinito")
-        self.checkbox_set_as_default.setStyleSheet("color: #f39c12; font-weight: bold;")
-        group_create_layout.addRow("", self.checkbox_set_as_default)
+        self.btn_set_default = QPushButton("⭐ Imposta Predefinito")
+        self.btn_set_default.setStyleSheet("""
+            QPushButton {
+                background-color: #f39c12;
+                color: white;
+                padding: 12px 20px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #e67e22;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+        """)
+        self.btn_set_default.clicked.connect(self.action_set_default)
         
-        btn_create_preset = QPushButton("✔ Crea e Usa Nuovo Preset")
-        btn_create_preset.clicked.connect(self.create_new_preset)
+        self.btn_save_changes = QPushButton("💾 Salva modifiche")
+        self.btn_save_changes.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 12px 20px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
+        self.btn_save_changes.clicked.connect(self.action_save_preset)
+
+        editor_actions.addWidget(self.btn_set_default)
+        editor_actions.addStretch()
+        editor_actions.addWidget(self.btn_save_changes)
+        right_layout.addLayout(editor_actions)
+
+        # Footer
+        right_layout.addStretch()
         
-        group_create.setLayout(group_create_layout)
+        footer_separator = QLabel()
+        footer_separator.setStyleSheet("""
+            background-color: #dee2e6; 
+            min-height: 1px; 
+            max-height: 1px;
+        """)
+        right_layout.addWidget(footer_separator)
+
+        final_buttons = QHBoxLayout()
+        final_buttons.setSpacing(15)
         
-        # Scroll area per il form
-        scroll = QScrollArea()
-        scroll.setWidget(group_create)
-        scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(400)
+        btn_cancel = QPushButton("✕ Chiudi")
+        btn_cancel.setFixedWidth(120)
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #95a5a6;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #7f8c8d;
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)
         
-        layout.addWidget(scroll)
-        layout.addWidget(btn_create_preset)
+        self.btn_use = QPushButton("🚀 USA QUESTO PRESET")
+        self.btn_use.setFixedHeight(45)
+        self.btn_use.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                padding: 0px 30px;
+                font-size: 15px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+        """)
+        self.btn_use.clicked.connect(self.action_use_selected)
         
-        # --- PULSANTE CHIUDI ---
-        btn_close = QPushButton("✕ Chiudi")
-        btn_close.clicked.connect(self.reject)
-        layout.addWidget(btn_close)
+        final_buttons.addWidget(btn_cancel)
+        final_buttons.addStretch()
+        final_buttons.addWidget(self.btn_use)
+        right_layout.addLayout(final_buttons)
+
+        main_layout.addWidget(right_widget, 2)
         
-    def update_key_column(self):
-        """Auto-valorizza il campo colonna in base a Nome e Numero colonna chiave"""
-        key_name = self.input_key_name.text().strip()
-        key_number_text = self.input_key_number.text().strip()
         
-        # Cancella il valore precedente se esisteva
-        if hasattr(self, '_last_key_number') and self._last_key_number is not None:
-            if 1 <= self._last_key_number <= 7:
-                # Cancella solo se il valore corrente corrisponde al nome chiave precedente
-                old_value = self.column_inputs[self._last_key_number - 1].text().strip()
-                if hasattr(self, '_last_key_name') and old_value == self._last_key_name:
-                    self.column_inputs[self._last_key_number - 1].clear()
+    # ============================================================
+    # GESTIONE LISTA E SELEZIONE
+    # ============================================================
+
+    def load_preset_list(self):
+        """Popola la lista dei preset con icone di stato"""
+        self.list_presets.clear()
         
-        # Valida il numero colonna
-        if not key_number_text or not key_name:
+        # Ottieni l'ordine salvato dal parent
+        if hasattr(self.parent(), 'preset_order'):
+            saved_order = self.parent().preset_order
+        else:
+            saved_order = []
+        
+        # Crea lista ordinata: prima quelli nell'ordine salvato, poi gli altri alfabeticamente
+        ordered_names = []
+        remaining_names = set(self.presets.keys())
+        
+        # Aggiungi preset nell'ordine salvato (se esistono ancora)
+        for name in saved_order:
+            if name in self.presets:
+                ordered_names.append(name)
+                remaining_names.discard(name)
+        
+        # Aggiungi preset rimanenti in ordine alfabetico
+        ordered_names.extend(sorted(remaining_names))
+        
+        for name in ordered_names:
+            display_name = name
+            if name == self.default_preset:
+                display_name = f"⭐ {display_name}"
+            if name in self.protected_presets:
+                display_name = f"🔒 {display_name}"
+            
+            item = QListWidgetItem(display_name)
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.list_presets.addItem(item)
+        
+        total = len(ordered_names)
+        protected = len([n for n in ordered_names if n in self.protected_presets])
+        custom = total - protected
+        self.label_preset_count.setText(
+            f"Totale: {total} preset ({custom} personalizzati, {protected} di sistema)"
+        )
+
+    def select_preset_in_list(self, name):
+        """Sincronizza selezione grafica con nome logico"""
+        for i in range(self.list_presets.count()):
+            item = self.list_presets.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == name:
+                self.list_presets.setCurrentRow(i)
+                break
+
+    def on_selection_changed(self, current_item, previous_item):
+        """Carica preset usando radio button"""
+        if not current_item:
             return
         
-        try:
-            key_number = int(key_number_text)
-            if 1 <= key_number <= MAX_COLUMNS:
-                # Valorizza automaticamente il campo corrispondente
-                self.column_inputs[key_number - 1].setText(key_name)
-                # Memorizza l'ultima posizione e nome
-                self._last_key_number = key_number
-                self._last_key_name = key_name
-        except ValueError:
-            pass
-    
-    def on_preset_changed(self, preset_name):
-        """Aggiorna i dettagli quando si cambia preset"""
-        self.update_preset_details()
-    
-    def update_preset_details(self):
-        """Mostra i dettagli del preset selezionato"""
-        preset_name = self.combo_presets.currentText()
-        preset_data = self.presets[preset_name]
+        clean_name = current_item.data(Qt.ItemDataRole.UserRole)
+        self.current_selected_name = clean_name
         
-        columns_str = ", ".join(preset_data["columns"])
+        preset_data = self.presets.get(clean_name)
+        if not preset_data:
+            return
+
+        # Esci dalla modalità "nuovo preset"
+        self.is_new_preset_mode = False
+        self.update_editor_mode()
+
+        # Carica nome preset
+        self.input_name.setText(clean_name)
         
-        # *** NUOVO: Mostra stella se è il predefinito ***
-        is_default = (preset_name == self.default_preset)
-        default_badge = " <span style='color: #f39c12; font-size: 16px;'>⭐ PREDEFINITO</span>" if is_default else ""
+        # 🐛 FIX 2: Reset ESPLICITO di tutti i radio button prima di caricare
+        for radio, _ in self.column_rows:
+            radio.setChecked(False)
         
-        # *** NUOVO: Mostra badge "PROTETTO" se non eliminabile ***
-        is_protected = preset_name in self.protected_presets
-        protected_badge = " <span style='color: #95a5a6; font-size: 14px;'>🔒 PROTETTO</span>" if is_protected else ""
+        # Carica colonne e seleziona chiave
+        cols = preset_data['columns']
+        key = preset_data['key_column']
+
+        for i, (radio, edit) in enumerate(self.column_rows):
+            if i < len(cols):
+                edit.setText(cols[i])
+                radio.setEnabled(True)  # ← AGGIUNGI: Abilita se c'è testo
+                # Seleziona radio se è la colonna chiave
+                if cols[i] == key:
+                    radio.setChecked(True)
+            else:
+                edit.clear()
+                radio.setEnabled(False)  # ← AGGIUNGI: Disabilita se vuoto
         
-        details = f"<b>Preset:</b> {preset_name}{default_badge}{protected_badge}<br>"
-        details += f"<b>Colonna Chiave:</b> {preset_data['key_column']}<br>"
-        details += f"<b>Colonne:</b> {columns_str}"
+        # Aggiorna info selezione
+        is_default = (clean_name == self.default_preset)
+        is_protected = clean_name in self.protected_presets
         
-        self.label_preset_details.setText(details)
+        info_parts = []
+        if is_default:
+            info_parts.append("⭐ Preset predefinito")
+        if is_protected:
+            info_parts.append("🔒 Preset protetto")
         
-        # *** NUOVO: Disabilita pulsante Elimina se il preset è protetto ***
-        self.btn_delete_preset.setEnabled(not is_protected)
-    
-    def select_existing_preset(self):
-        """Seleziona un preset esistente"""
-        self.result = {
-            'action': 'select',
-            'preset_name': self.combo_presets.currentText()
-        }
-        self.accept()
+        if info_parts:
+            self.label_selection_info.setText(" • ".join(info_parts))
+        else:
+            self.label_selection_info.setText("Preset personalizzato")
         
+        # Gestione stati
+        self.btn_delete.setEnabled(not is_protected)
+        self.input_name.setEnabled(not is_protected)
         
-    def set_as_default(self):
-        """Imposta il preset selezionato come predefinito"""
-        preset_name = self.combo_presets.currentText()
+        # Gestione pulsanti ordinamento
+        current_row = self.list_presets.currentRow()
+        self.btn_move_up.setEnabled(current_row > 0)
+        self.btn_move_down.setEnabled(current_row < self.list_presets.count() - 1)
         
-        reply = QMessageBox.question(
-            self,
-            "⭐ Imposta Preset Predefinito",
-            f"Vuoi impostare '{preset_name}' come preset predefinito?\n\n"
-            "Questo preset verrà caricato automaticamente all'avvio dell'applicazione.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        self.clear_error()
+
+    # ============================================================
+    # GESTIONE MODALITÀ NUOVO/MODIFICA
+    # ============================================================
+
+    def update_editor_mode(self):
+        """Aggiorna UI in base alla modalità"""
+        if self.is_new_preset_mode:
+            self.editor_header.setText("🆕 Nuovo Preset")
+            self.editor_header.setStyleSheet("""
+                font-size: 16px;
+                font-weight: bold;
+                color: #27ae60;
+                padding: 10px;
+                border-bottom: 3px solid #27ae60;
+            """)
+            self.btn_save_changes.setText("➕ Crea preset")
+            self.btn_set_default.setEnabled(False)
+            self.btn_use.setEnabled(False)
+            self.label_selection_info.setText(
+                "✏️ Compila le colonne e clicca sul radio button per selezionare la chiave"
+            )
+        else:
+            self.editor_header.setText("✏️ Modifica Configurazione")
+            self.editor_header.setStyleSheet("""
+                font-size: 16px;
+                font-weight: bold;
+                color: #2c3e50;
+                padding: 10px;
+                border-bottom: 2px solid #3498db;
+            """)
+            self.btn_save_changes.setText("💾 Salva modifiche")
+            self.btn_set_default.setEnabled(True)
+            self.btn_use.setEnabled(True)
+
+    # ============================================================
+    # GESTIONE ERRORI INLINE
+    # ============================================================
+
+    def show_error(self, message):
+        """Mostra errore inline"""
+        self.label_error.setText(f"⚠️ {message}")
+        self.label_error.show()
+
+    def clear_error(self):
+        """Nascondi errore"""
+        self.label_error.hide()
+
+    # ============================================================
+    # AZIONI PRINCIPALI
+    # ============================================================
+
+    def prepare_new_preset(self):
+        """Pulisce form per nuovo preset"""
+        self.list_presets.clearSelection()
+        self.current_selected_name = None
+        self.is_new_preset_mode = True
         
-        if reply == QMessageBox.StandardButton.Yes:
-            self.result = {
-                'action': 'set_default',
-                'preset_name': preset_name
-            }
-            self.accept()
-    
-    def delete_preset(self):
-        """Elimina il preset selezionato"""
-        preset_name = self.combo_presets.currentText()
+        self.input_name.clear()
         
-        # Verifica che non sia un preset protetto
-        if preset_name in self.protected_presets:
-            QMessageBox.warning(
+        # Pulisci tutte le colonne e deseleziona radio
+        for radio, edit in self.column_rows:
+            radio.setChecked(False)
+            edit.clear()
+        
+        self.input_name.setEnabled(True)
+        self.input_name.setFocus()
+        
+        self.update_editor_mode()
+        self.clear_error()
+
+    def action_save_preset(self):
+        """✨ SALVA PRESET CON BUGFIX VALIDAZIONE"""
+        name = self.input_name.text().strip()
+        
+        # Raccogli colonne e chiave
+        columns = []
+        key_column = None
+
+        for i, (radio, edit) in enumerate(self.column_rows):
+            text = edit.text().strip()
+            if text:  # Solo colonne compilate
+                columns.append(text)
+                # 🐛 FIX 3: Controlla che ENTRAMBI siano veri
+                if radio.isChecked() and text:
+                    key_column = text
+
+        # 🐛 FIX 3: Validazione esplicita della chiave
+        if not key_column:
+            self.show_error(
+                "Seleziona una colonna chiave cliccando sul radio button. "
+                "Il radio button si abilita automaticamente quando compili il campo."
+            )
+            return
+
+        # Validazione completa
+        is_valid, error_msg = self.validate_preset_data(name, key_column, columns)
+        if not is_valid:
+            self.show_error(error_msg)
+            return
+
+        # Controllo sovrascrittura
+        if name in self.presets and name != self.current_selected_name:
+            reply = QMessageBox.question(
                 self,
-                "🔒 Preset Protetto",
-                f"Il preset '{preset_name}' è un preset di sistema e non può essere eliminato."
+                "⚠️ Preset Esistente",
+                f"Il preset '<b>{name}</b>' esiste già.\n\n"
+                "Vuoi sovrascriverlo con questa nuova configurazione?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+        # ✅ CORREZIONE: Prepara i dati da restituire
+        self.result = {
+            'action': 'create',
+            'preset_name': name,
+            'key_column': key_column,
+            'columns': columns,
+            'set_as_default': False
+        }
+        
+        # ✅ Salva nel dizionario locale (per preview nel dialog)
+        self.presets[name] = {
+            'key_column': key_column,
+            'columns': columns
+        }
+        
+        # Aggiungi all'ordine se è un nuovo preset
+        parent = self.parent()
+        if name not in parent.preset_order:
+            parent.preset_order.append(name)
+        
+        # Ricarica lista e seleziona il preset salvato
+        self.load_preset_list()
+        self.select_preset_in_list(name)
+        
+        # Esci dalla modalità nuovo
+        self.is_new_preset_mode = False
+        self.current_selected_name = name
+        self.update_editor_mode()
+        
+        # Feedback
+        self.label_selection_info.setText(
+            f"✅ Preset '{name}' salvato con successo! "
+            f"Colonna chiave: {key_column}\n"
+            f"Premi '🚀 USA QUESTO PRESET' per applicarlo"
+        )
+
+    def action_set_default(self):
+        """Imposta preset come predefinito"""
+        if not self.current_selected_name:
+            self.show_error("Seleziona un preset prima di impostarlo come predefinito")
+            return
+        
+        if self.current_selected_name == self.default_preset:
+            QMessageBox.information(
+                self,
+                "Già Predefinito",
+                f"Il preset '<b>{self.current_selected_name}</b>' è già impostato come predefinito!"
             )
             return
         
-        # Chiedi conferma
-        reply = QMessageBox.question(
-            self,
-            "🗑️ Conferma Eliminazione",
-            f"Sei sicuro di voler eliminare il preset '{preset_name}'?\n\n"
+        self.result = {
+            'action': 'set_default', 
+            'preset_name': self.current_selected_name
+        }
+        self.accept()
+
+    def action_use_selected(self):
+        """Usa il preset selezionato"""
+        if not self.current_selected_name:
+            self.show_error("Seleziona un preset prima di usarlo")
+            return
+        
+        # ✅ FIX: Se abbiamo appena creato questo preset, mantieni action='create'
+        if (self.result and 
+            self.result.get('action') == 'create' and 
+            self.result.get('preset_name') == self.current_selected_name):
+            # Usa il result esistente che contiene tutti i dati
+            self.accept()
+        else:
+            # Preset esistente, usa action='select'
+            self.result = {
+                'action': 'select', 
+                'preset_name': self.current_selected_name
+            }
+            self.accept()
+
+    def delete_selected_preset(self):
+        """Elimina preset selezionato"""
+        if not self.current_selected_name:
+            self.show_error("Seleziona un preset prima di eliminarlo")
+            return
+        
+        if self.current_selected_name in self.protected_presets:
+            self.show_error(
+                f"Il preset '{self.current_selected_name}' è protetto e non può essere eliminato"
+            )
+            return
+        
+        confirm = QMessageBox.question(
+            self, 
+            "🗑️ Conferma Eliminazione", 
+            f"Sei sicuro di voler eliminare definitivamente il preset "
+            f"'<b>{self.current_selected_name}</b>'?\n\n"
             "Questa azione non può essere annullata.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.StandardButton.Yes:
-            self.result = {
-                'action': 'delete',
-                'preset_name': preset_name
-            }
-            self.accept()
-    
-    def create_new_preset(self):
-        """Crea un nuovo preset personalizzato"""
-        preset_name = self.input_preset_name.text().strip()
-        key_column = self.input_key_name.text().strip()
-        key_number_text = self.input_key_number.text().strip()
-        
-        # Valida Numero colonna chiave
-        if not key_number_text:
-            QMessageBox.warning(self, "Campo Obbligatorio", 
-                              "Il Numero colonna chiave è obbligatorio!")
-            return
-        
-        try:
-            key_number = int(key_number_text)
-            if not (1 <= key_number <= MAX_COLUMNS):
-                QMessageBox.warning(
-                    self,
-                    "Valore Non Valido",
-                    f"Il Numero colonna chiave deve essere compreso tra 1 e {MAX_COLUMNS}!"
-                )
-                return
-
-        except ValueError:
-            QMessageBox.warning(self, "Valore Non Valido", 
-                              "Il Numero colonna chiave deve essere un numero!")
-            return
-        
-        # Raccogli tutte le colonne valorizzate
-        columns = []
-        for i in range(MAX_COLUMNS):
-            col_name = self.column_inputs[i].text().strip()
-            if col_name:
-                columns.append(col_name)
-        
-        # Usa validazione unificata
-        is_valid, error_msg = self.validate_preset_data(preset_name, key_column, columns)
-        if not is_valid:
-            QMessageBox.warning(self, "Validazione Fallita", error_msg)
-            return
-        
-        # Controlla se esiste già
-        if preset_name in self.presets:
-            reply = QMessageBox.question(
-                self,
-                "Preset Esistente",
-                f"Il preset '{preset_name}' esiste già. Vuoi sovrascriverlo?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        if confirm == QMessageBox.StandardButton.Yes:
+            preset_to_delete = self.current_selected_name
+            
+            # ✅ ELIMINA LOCALMENTE (non chiudere il dialog)
+            # Rimuovi dal dizionario locale
+            del self.presets[preset_to_delete]
+            
+            # Rimuovi dall'ordine
+            parent = self.parent()
+            if preset_to_delete in parent.preset_order:
+                parent.preset_order.remove(preset_to_delete)
+            
+            # Se era il preset predefinito, resettalo
+            if self.default_preset == preset_to_delete:
+                self.default_preset = None
+            
+            # ✅ SALVA SUBITO (così il parent è sincronizzato)
+            parent.presets = self.presets.copy()
+            parent.default_preset = self.default_preset
+            parent.save_presets()
+            
+            # ✅ RICARICA LA LISTA E SELEZIONA IL PRIMO DISPONIBILE
+            self.load_preset_list()
+            if self.presets:
+                first_preset_name = list(self.presets.keys())[0]
+                self.select_preset_in_list(first_preset_name)
+            else:
+                # Nessun preset rimasto (teoricamente impossibile, ci sono quelli protetti)
+                self.prepare_new_preset()
+            
+            # ✅ FEEDBACK VISIVO
+            self.label_selection_info.setText(
+                f"✅ Preset '{preset_to_delete}' eliminato con successo"
             )
-            if reply == QMessageBox.StandardButton.No:
-                return
+            
+            
+    def move_preset_up(self):
+        """Sposta il preset selezionato verso l'alto nella lista"""
+        current_row = self.list_presets.currentRow()
         
-        self.result = {
-            'action': 'create',
-            'preset_name': preset_name,
-            'key_column': key_column,
-            'columns': columns,
-            'set_as_default': self.checkbox_set_as_default.isChecked()  # *** NUOVO ***
-        }
-        self.accept()
-    
+        if current_row <= 0:
+            return  # Già in cima
+        
+        current_item = self.list_presets.currentItem()
+        preset_name = current_item.data(Qt.ItemDataRole.UserRole)
+        
+        # Aggiorna l'ordine nel parent
+        self._update_preset_order()
+        parent = self.parent()
+        
+        if preset_name in parent.preset_order:
+            current_index = parent.preset_order.index(preset_name)
+            if current_index > 0:
+                # Scambia con il precedente
+                parent.preset_order[current_index], parent.preset_order[current_index - 1] = \
+                    parent.preset_order[current_index - 1], parent.preset_order[current_index]
+        
+        # Ricarica la lista e mantieni la selezione
+        self.load_preset_list()
+        self.list_presets.setCurrentRow(current_row - 1)
+        
+        # Salva immediatamente
+        parent.save_presets()
+        
+        self.label_selection_info.setText("✅ Preset spostato verso l'alto")
+
+    def move_preset_down(self):
+        """Sposta il preset selezionato verso il basso nella lista"""
+        current_row = self.list_presets.currentRow()
+        
+        if current_row >= self.list_presets.count() - 1:
+            return  # Già in fondo
+        
+        current_item = self.list_presets.currentItem()
+        preset_name = current_item.data(Qt.ItemDataRole.UserRole)
+        
+        # Aggiorna l'ordine nel parent
+        self._update_preset_order()
+        parent = self.parent()
+        
+        if preset_name in parent.preset_order:
+            current_index = parent.preset_order.index(preset_name)
+            if current_index < len(parent.preset_order) - 1:
+                # Scambia con il successivo
+                parent.preset_order[current_index], parent.preset_order[current_index + 1] = \
+                    parent.preset_order[current_index + 1], parent.preset_order[current_index]
+        
+        # Ricarica la lista e mantieni la selezione
+        self.load_preset_list()
+        self.list_presets.setCurrentRow(current_row + 1)
+        
+        # Salva immediatamente
+        parent.save_presets()
+        
+        self.label_selection_info.setText("✅ Preset spostato verso il basso")
+
+    def _update_preset_order(self):
+        """Sincronizza l'ordine corrente della lista con preset_order del parent"""
+        parent = self.parent()
+        current_order = []
+        
+        for i in range(self.list_presets.count()):
+            item = self.list_presets.item(i)
+            preset_name = item.data(Qt.ItemDataRole.UserRole)
+            current_order.append(preset_name)
+        
+        parent.preset_order = current_order
+
     def get_result(self):
         """Restituisce il risultato della dialog"""
-        return self.result
-
+        return self.result   
+        
+        
+        
+               
 
 class ComparisonEngine:
     """Motore di confronto logico separato dalla UI"""
@@ -684,11 +1261,16 @@ class TableManager:
         header.setSortIndicatorShown(False)
         header.setSectionsClickable(True)
         
-        # ✅ CORREZIONE: Disconnetti tutti i signal precedenti per evitare accumulo
-        try:
-            header.sectionClicked.disconnect()
-        except TypeError:
-            pass  # Nessun signal collegato, ok
+        # Salva il riferimento all'handler per poterlo disconnettere dopo
+        if not hasattr(self, '_sort_handlers'):
+            self._sort_handlers = {}
+        
+        # Disconnetti l'handler precedente di QUESTA tabella specifica
+        if table in self._sort_handlers:
+            try:
+                header.sectionClicked.disconnect(self._sort_handlers[table])
+            except TypeError:
+                pass
         
         def on_header_clicked(logical_index):
             # Determina la direzione dell'ordinamento
@@ -714,6 +1296,8 @@ class TableManager:
                     else:
                         table.horizontalHeaderItem(col).setText(original_text)
         
+        # Salva il riferimento per disconnessione futura
+        self._sort_handlers[table] = on_header_clicked
         header.sectionClicked.connect(on_header_clicked)
 
     def reset_sorting(self, table):
@@ -729,19 +1313,20 @@ class TableManager:
 class CodeComparator(QMainWindow):
     """Applicazione principale per confrontare liste basate su colonne chiave"""
     
-    # ← AGGIUNGI QUESTE RIGHE QUI ↓
-    
     @property
     def columns(self):
-        """Quando il codice legge self.columns, restituisci _columns"""
+        """Restituisce le colonne correnti"""
         return self._columns
     
     @columns.setter
     def columns(self, nuovo_valore):
-        """Quando il codice scrive self.columns = [...], fai AUTOMATICAMENTE:"""
-        self._columns = nuovo_valore  # 1. Salva il nuovo valore
+        """Aggiorna colonne e sincronizza con table_manager"""
+        if not isinstance(nuovo_valore, list):
+            raise ValueError("columns deve essere una lista")
         
-        # 2. Se esiste già table_manager, aggiornalo anche lui!
+        self._columns = nuovo_valore
+        
+        # Sincronizza con table_manager se esiste
         if hasattr(self, 'table_manager'):
             self.table_manager.columns = nuovo_valore
     
@@ -791,6 +1376,8 @@ class CodeComparator(QMainWindow):
         
         # --- Variabile per preset predefinito ---
         self.default_preset = None
+        
+        self.preset_order = []  # ← CREA la variabile PRIMA di caricare
         
         # --- Carica preset salvati ---
         self.load_presets()
@@ -861,9 +1448,10 @@ class CodeComparator(QMainWindow):
                 except Exception as e:
                     logging.warning(f"Impossibile creare backup: {e}")
             
-            # Prepara i dati da salvare con preset predefinito
+            # Prepara i dati da salvare con preset predefinito e ordine
             data_to_save = {
                 "default_preset": self.default_preset,
+                "preset_order": self.preset_order if hasattr(self, 'preset_order') else [],
                 "presets": self.presets
             }
             
@@ -908,13 +1496,16 @@ class CodeComparator(QMainWindow):
                 if "presets" in loaded_data:
                     loaded_presets = loaded_data.get("presets", {})
                     self.default_preset = loaded_data.get("default_preset", None)
+                    self.preset_order = loaded_data.get("preset_order", [])
                 # Vecchio formato (solo preset diretti)
                 else:
                     loaded_presets = loaded_data
                     self.default_preset = None
+                    self.preset_order = []
             else:
                 loaded_presets = {}
                 self.default_preset = None
+                self.preset_order = []
             
             # Validazione: ogni preset deve avere "key_column" e "columns"
             valid_presets = {}
@@ -947,7 +1538,7 @@ class CodeComparator(QMainWindow):
             self._restore_backup()
             
         except Exception as e:
-            logging.error(f"Errore nel caricamento dei preset: {e}")  # ✅ CORRETTO
+            logging.exception(f"Errore nel caricamento dei preset: {e}")
 
     def _validate_preset(self, preset_name, preset_data):
         """
@@ -1349,6 +1940,7 @@ class CodeComparator(QMainWindow):
         
         self.update_table_display(store["table"], df_updated)
         self._update_counters(list_id)
+        self.table_manager.reset_sorting(store["table"]) 
         store["btn_restore"].setEnabled(True)
 
         logging.info(f"Lista {list_id}: eliminate {len(indices_to_delete)} righe")
@@ -1690,16 +2282,10 @@ class CodeComparator(QMainWindow):
     def _parse_clipboard_text(self, text):
         """
         Trasforma il testo della clipboard in DataFrame grezzo.
-        Gestisce sia celle con virgolette (Excel) sia senza (fallback).
-        
-        Args:
-            text: Testo copiato dalla clipboard
-        
-        Returns:
-            DataFrame grezzo o None in caso di errore
+        ✅ LEGGE TUTTE LE COLONNE senza troncare in base al preset.
         """
         try:
-            # ✅ TENTATIVO 1: Usa csv.reader (gestisce virgolette)
+            # Usa csv.reader per gestire virgolette
             rows = []
             reader = csv.reader(
                 io.StringIO(text), 
@@ -1715,27 +2301,38 @@ class CodeComparator(QMainWindow):
             if not rows:
                 raise pd.errors.EmptyDataError("Nessuna riga trovata")
             
-            expected_cols = len(self.columns)
+            # ✅ TROVA IL NUMERO MASSIMO DI COLONNE NEI DATI INCOLLATI
+            max_cols = max(len(row) for row in rows)
+            
+            # ✅ NORMALIZZA TUTTE LE RIGHE ALLA STESSA LUNGHEZZA
             processed_rows = []
-
             for row in rows:
-                if len(row) >= expected_cols:
-                    processed_rows.append(row[:expected_cols])
-                elif processed_rows:
-                    # Unisci riga incompleta alla precedente
-                    processed_rows[-1][-1] += '\n' + '\t'.join(row)
+                # Estendi righe corte con stringhe vuote
+                normalized_row = row + [''] * (max_cols - len(row))
+                processed_rows.append(normalized_row)
             
             if not processed_rows:
                 raise pd.errors.EmptyDataError("Nessuna riga valida trovata")
             
-            # Converti in DataFrame
+            # ✅ CREA DATAFRAME CON TUTTE LE COLONNE
             df = pd.DataFrame(processed_rows, dtype=str)
             
             # ✅ Traccia il numero di riga originale
             df['__ORIGINAL_ROW__'] = range(1, len(df) + 1)
             
-            # Assegna nomi colonne
-            df.columns = self.columns + ['__ORIGINAL_ROW__']
+            # ✅ GENERA NOMI COLONNE TEMPORANEI O USA PRESET
+            if max_cols == len(self.columns):
+                # Stesso numero di colonne: usa preset
+                column_names = self.columns + ['__ORIGINAL_ROW__']
+            elif max_cols < len(self.columns):
+                # Meno colonne: usa solo le prime del preset
+                column_names = self.columns[:max_cols] + ['__ORIGINAL_ROW__']
+            else:
+                # Più colonne: usa preset + colonne extra generiche
+                extra_cols = [f"Colonna_{i+1}" for i in range(len(self.columns), max_cols)]
+                column_names = self.columns + extra_cols + ['__ORIGINAL_ROW__']
+            
+            df.columns = column_names
             
             return df
             
@@ -1747,7 +2344,7 @@ class CodeComparator(QMainWindow):
         except Exception as e:
             QMessageBox.critical(
                 self, 
-                "⌠Errore Critico - Parsing",
+                "❌ Errore Critico - Parsing",
                 f"Errore nel parsing dei dati:\n\n{str(e)}"
             )
             logging.exception(f"Errore parsing clipboard: {e}")
@@ -1806,51 +2403,56 @@ class CodeComparator(QMainWindow):
     def _apply_header_from_first_row(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Applica l'intestazione dalla prima riga del DataFrame.
-        
-        Args:
-            df: DataFrame con intestazione nella prima riga
-        
-        Returns:
-            DataFrame con intestazione applicata e prima riga rimossa
-        
-        Note:
-            Questo metodo:
-            1. Estrae i nomi colonna dalla prima riga
-            2. Aggiorna tutte le strutture dati (preset, tabelle, TableManager)
-            3. Salva le modifiche su disco
+        ✅ Usa TUTTE le colonne del DataFrame, non solo quelle del preset.
         """
-        # Estrai nomi colonne dalla prima riga
-        new_columns = [
-            str(df.iloc[0][col]).strip() 
-            if not pd.isna(df.iloc[0][col]) and str(df.iloc[0][col]).strip()
-            else col
-            for col in self.columns
-        ]
+        # ✅ Estrai nomi da TUTTE le colonne del DataFrame (esclusa __ORIGINAL_ROW__)
+        data_columns = [col for col in df.columns if col != '__ORIGINAL_ROW__']
+        
+        new_columns = []
+        for i, col_name in enumerate(data_columns):
+            # Prendi il valore dalla prima riga
+            value = df.iloc[0][col_name]
+            if not pd.isna(value) and str(value).strip():
+                new_columns.append(str(value).strip())
+            else:
+                # Fallback: mantieni il nome corrente
+                new_columns.append(col_name)
         
         # Rimuovi prima riga e aggiorna colonne
         df = df.iloc[1:].reset_index(drop=True)
         df.columns = new_columns + ['__ORIGINAL_ROW__']
         
-        # Aggiorna colonna chiave
+        # ✅ Aggiorna colonna chiave (cerca il nome nell'intestazione)
         try:
             old_key_idx = list(self.presets[self.current_preset]["columns"]).index(self.key_column)
-            self.key_column = new_columns[old_key_idx]
+            if old_key_idx < len(new_columns):
+                self.key_column = new_columns[old_key_idx]
+            else:
+                # Fallback: usa la prima colonna
+                self.key_column = new_columns[0] if new_columns else self.key_column
         except (ValueError, IndexError):
             self.key_column = new_columns[0] if new_columns else self.key_column
         
+        # ✅ AGGIORNA LE COLONNE GLOBALI
         self.columns = new_columns
         self.table_manager.columns = new_columns
         
-                
         # Aggiorna tutte le tabelle
         for list_id in [1, 2]:
             table = self.lists[list_id]["table"]
             table.setColumnCount(len(self.columns))
             table.setHorizontalHeaderLabels(self.columns)
+            self.table_manager.enable_manual_sorting(table)  # ✅ RIABILITA SORTING
         
         for result_table in [self.res_matches, self.res_mismatches]:
             result_table.setColumnCount(len(self.columns))
             result_table.setHorizontalHeaderLabels(self.columns)
+            self.table_manager.enable_manual_sorting(result_table)  # ✅ RIABILITA SORTING
+            self.table_manager.enable_manual_sorting(result_table)  # ✅ Riabilita sorting
+        
+        # ✅ CANCELLA I RISULTATI OBSOLETI (le colonne sono cambiate!)
+        if self.matches_df is not None or self.mismatches_df is not None:
+            self.clear_results(confirm=False)
         
         self.info_label.setText(
             f"✅ Intestazione applicata: colonna chiave = '{self.key_column}'"
@@ -2373,6 +2975,7 @@ class CodeComparator(QMainWindow):
                 self.current_preset = result['preset_name']
                 self.key_column = self.presets[self.current_preset]["key_column"]
                 self.columns = self.presets[self.current_preset]["columns"].copy()
+                self.table_manager.columns = self.columns  # ✅ SINCRONIZZA
                 
             elif result['action'] == 'create':
                 # Crea nuovo preset
@@ -2384,6 +2987,7 @@ class CodeComparator(QMainWindow):
                 self.current_preset = preset_name
                 self.key_column = result['key_column']
                 self.columns = result['columns']
+                self.table_manager.columns = self.columns  # ✅ SINCRONIZZA
                 
                 # *** NUOVO: Imposta come predefinito se richiesto ***
                 if result.get('set_as_default', False):
@@ -2404,44 +3008,12 @@ class CodeComparator(QMainWindow):
                 )
                 return  # *** Non resettare i dati, solo salva il predefinito ***
             
-            # *** NUOVO: Gestisci azione "delete" ***
-            elif result['action'] == 'delete':
-                preset_name = result['preset_name']
-                
-                # Verifica che non sia protetto (doppia sicurezza)
-                if preset_name in self.protected_presets:
-                    QMessageBox.warning(
-                        self,
-                        "🔒 Preset Protetto",
-                        f"Il preset '{preset_name}' è un preset di sistema e non può essere eliminato."
-                    )
-                    return
-                
-                # Rimuovi dal dizionario
-                del self.presets[preset_name]
-                
-                # Se era il preset corrente, passa al primo disponibile
-                if self.current_preset == preset_name:
-                    self.current_preset = next(iter(self.presets.keys()))
-                    self.key_column = self.presets[self.current_preset]["key_column"]
-                    self.columns = self.presets[self.current_preset]["columns"].copy()
-                    self.reset_all_data()
-                
-                # Se era il preset predefinito, resettalo
-                if self.default_preset == preset_name:
-                    self.default_preset = None
-                
-                # Salva le modifiche
-                self.save_presets()
-                
-                QMessageBox.information(
-                    self,
-                    "✓ Preset Eliminato",
-                    f"Il preset '{preset_name}' è stato eliminato con successo."
-                )
-                return
-            
+                       
                         
+            # ✅ SINCRONIZZA I PRESET (potrebbero essere stati eliminati nel dialog)
+            self.presets = dialog.presets.copy()
+            self.default_preset = dialog.default_preset
+            
             # Resetta le liste
             self.reset_all_data()
             
