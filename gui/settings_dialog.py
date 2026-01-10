@@ -500,15 +500,29 @@ class SettingsDialog(QDialog):
         else:
             saved_order = []
         
-        ordered_names = []
+        # Separa i preset dall'ordine salvato in protetti e personalizzati
+        protected_from_order = []
+        custom_from_order = []
         remaining_names = set(self.presets.keys())
         
         for name in saved_order:
             if name in self.presets:
-                ordered_names.append(name)
+                if name in self.protected_presets:
+                    protected_from_order.append(name)
+                else:
+                    custom_from_order.append(name)
                 remaining_names.discard(name)
         
-        ordered_names.extend(sorted(remaining_names))
+        # Separa i preset rimanenti in protetti e personalizzati
+        protected_remaining = sorted([n for n in remaining_names if n in self.protected_presets])
+        custom_remaining = sorted([n for n in remaining_names if n not in self.protected_presets])
+        
+        # Costruisci l'ordine finale: prima TUTTI i protetti, poi TUTTI i personalizzati
+        ordered_names = []
+        ordered_names.extend(protected_from_order)
+        ordered_names.extend(protected_remaining)
+        ordered_names.extend(custom_from_order)
+        ordered_names.extend(custom_remaining)
         
         for name in ordered_names:
             display_name = name
